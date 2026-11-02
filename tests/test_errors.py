@@ -9,7 +9,14 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from event_service.schemas import CountsQuery, EventCreate
+from event_service.schemas import (
+    CountsQuery,
+    EventBatchCreate,
+    EventCreate,
+    EventsListQuery,
+    SummaryQuery,
+    TimeseriesQuery,
+)
 
 VALID_EVENT = {
     "source": "sensor-a",
@@ -106,6 +113,95 @@ def test_counts_query_rejects_invalid_windows_or_groupings(changes):
 def test_counts_query_requires_from_alias_not_python_field_name():
     with pytest.raises(ValidationError):
         CountsQuery.model_validate({**VALID_QUERY, "from_": VALID_QUERY["from"]})
+
+
+def test_batch_schema_validation():
+    # Valid batch with 1 event
+    valid = EventBatchCreate.model_validate({"events": [VALID_EVENT]})
+    assert len(valid.events) == 1
+
+    # Rejects empty batch
+    with pytest.raises(ValidationError):
+        EventBatchCreate.model_validate({"events": []})
+
+    # Rejects batch exceeding 100 events
+    with pytest.raises(ValidationError):
+        EventBatchCreate.model_validate({"events": [VALID_EVENT] * 101})
+
+
+def test_events_list_query_validation():
+    window = {"from": VALID_QUERY["from"], "to": VALID_QUERY["to"]}
+    valid = EventsListQuery.model_validate(
+        {
+            **window,
+            "source": "sensor-a",
+            "type": "temp",
+            "limit": 25,
+            "offset": 50,
+        }
+    )
+    assert valid.limit == 25
+    assert valid.offset == 50
+    assert valid.source == "sensor-a"
+
+    # Rejects booleans for limit / offset
+    with pytest.raises(ValidationError):
+        EventsListQuery.model_validate({**window, "limit": True})
+    with pytest.raises(ValidationError):
+        EventsListQuery.model_validate({**window, "offset": False})
+
+    # Rejects limit out of bounds
+    with pytest.raises(ValidationError):
+        EventsListQuery.model_validate({**window, "limit": 0})
+    with pytest.raises(ValidationError):
+        EventsListQuery.model_validate({**window, "limit": 101})
+
+    # Rejects negative offset
+    with pytest.raises(ValidationError):
+        EventsListQuery.model_validate({**window, "offset": -1})
+
+
+def test_timeseries_query_validation():
+    window = {"from": VALID_QUERY["from"], "to": VALID_QUERY["to"]}
+    valid = TimeseriesQuery.model_validate({**window, "bucket": "hour"})
+    assert valid.bucket == "hour"
+
+    # Rejects invalid bucket
+    with pytest.raises(ValidationError):
+        TimeseriesQuery.model_validate({**window, "bucket": "month"})
+
+    # Minute bucket span cannot exceed 7 days
+    with pytest.raises(ValidationError):
+        TimeseriesQuery.model_validate(
+            {
+                "from": "2026-01-01T00:00:00Z",
+                "to": "2026-01-08T00:00:01Z",
+                "bucket": "minute",
+            }
+        )
+
+    # Hour bucket span cannot exceed 90 days
+    with pytest.raises(ValidationError):
+        TimeseriesQuery.model_validate(
+            {
+                "from": "2026-01-01T00:00:00Z",
+                "to": "2026-04-02T00:00:01Z",
+                "bucket": "hour",
+            }
+        )
+
+
+def test_summary_query_validation():
+    window = {"from": VALID_QUERY["from"], "to": VALID_QUERY["to"]}
+    valid = SummaryQuery.model_validate(
+        {**window, "numeric_field": "temperature_c"}
+    )
+    assert valid.numeric_field == "temperature_c"
+
+    # Rejects numeric field with special characters / SQL injection attempt
+    with pytest.raises(ValidationError):
+        SummaryQuery.model_validate({**window, "numeric_field": "val; DROP TABLE"})
+
 
 
 @pytest.fixture

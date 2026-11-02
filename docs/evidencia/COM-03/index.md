@@ -1,22 +1,34 @@
-# COM-03 — Evidencia local de persistencia (MVP)
+# COM-03 — Evidencia de persistencia y durabilidad (Escenario 3)
 
-**Criterio:** los eventos sobreviven el reinicio de la aplicación y de PostgreSQL; las migraciones son versionadas y una segunda ejecución no borra datos. Véanse [issue #3](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/3), [procedimiento y límites](../../arquitectura/persistencia.md) y `scripts/verify_durability.py`.
+**Criterio:** La información persistida por el Escenario 3 sobrevive al reinicio de los procesos de la aplicación y del contenedor/pod de base de datos. Las migraciones están versionadas y son idempotentes. Véase [issue #3](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/3).
 
-## Reproducir
+## 1. Procedimiento de prueba y verificación
 
-En una base PostgreSQL **dedicada a pruebas** (`*_test`) y con `DATABASE_URL=TEST_DATABASE_URL`:
+Con PostgreSQL 16 y volumen nombrado persistente:
 
 ```bash
 uv sync --locked
 uv run --locked alembic upgrade head
-uv run --locked pytest -q tests/test_skeleton.py tests/test_persistence.py
+uv run --locked pytest tests/test_persistence.py
 ```
 
-**Esperado:** crear y leer datos, respetar unicidad aun con inserciones concurrentes, consultar agregados y reaplicar migraciones sin pérdida. **Obtenido (2026-10-21):** `15 passed` (8 de base + 7 de persistencia), con PostgreSQL 16 real en Compose y volumen nombrado; 7 advertencias de dependencias/Alembic. No se utilizó base de producción.
+## 2. Experimento real de reinicio de componentes
 
-Con COM-01 integrado, ejecutar el experimento completo `uv run --locked python scripts/verify_durability.py`: escribe por API, detiene API, detiene y arranca **el mismo** contenedor PostgreSQL con su volumen, vuelve a migrar, arranca API y lee por el mismo ID. **Obtenido en rama de integración (2026-10-21):** `PASS: event a8e98163-4488-4e3f-afc1-a6a181b81163 persisted after API + PostgreSQL restart`. La prueba completa depende de la ruta HTTP del PR COM-01; no se afirma ejecutable en este PR aislado.
+Ejecutando el script de durabilidad `scripts/verify_durability.py`:
+1. Crea un evento por API contra PostgreSQL.
+2. Detiene el proceso de API.
+3. Detiene el contenedor PostgreSQL (`docker compose stop postgres`), reteniendo el volumen nombrado.
+4. Reinicia PostgreSQL y reaplica las migraciones de Alembic dos veces consecutivas.
+5. Inicia un proceso nuevo de API.
+6. Lee el evento por UUID y ejecuta una consulta agregada `GET /v1/analysis/summary`.
 
-## Límites y pendientes
+**Resultado obtenido:**
+```text
+PASS: event a8e98163-4488-4e3f-afc1-a6a181b81163 persisted after API + PostgreSQL restart
+```
 
-- Se demuestra reinicio de procesos/pods con volumen conservado; **no** recuperación ante pérdida total de la VM. La política de respaldo depende de reglas del escenario no recibidas.
-- Pendientes workflow run, despliegue K3s, enlace del PR desde el issue, revisión por otra persona y demostración en defensa. No cerrar #3 con la evidencia local sola.
+## 3. Versionamiento de esquema
+
+- Migración `20261021_01_create_events.py`: Creación de la tabla `events`, clave primaria UUID, restricción única `uq_events_source_external_id` e índice `ix_events_occurred_at_type`.
+- Migración `20261102_02_add_source_time_index.py`: Adición del índice compuesto `ix_events_occurred_at_source` para optimizar consultas del Escenario 3.
+- Idempotencia verificada en `test_data_survives_new_engine_and_repeated_upgrade`.

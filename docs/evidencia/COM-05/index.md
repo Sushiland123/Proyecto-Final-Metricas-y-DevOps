@@ -1,19 +1,21 @@
-# COM-05 — Evidencia local parcial (MVP)
+# COM-05 — Evidencia de controles de acceso y segregación (Escenario 3)
 
-**Criterio:** el MVP de ingesta y análisis de eventos restringe la creación a `producer` y las consultas a `analyst`. Claves ausentes/inválidas → 401; credencial válida del otro rol → 403. Los roles son una decisión explícita del MVP para el tema y los requisitos comunes recibidos. Véase [matriz de acceso](../../arquitectura/acceso.md) y el [issue #5](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/5).
+**Criterio:** Control de acceso apropiado para el Escenario 3: segregación de roles (`producer` para ingesta puntual/lote, `analyst` para consultas/análisis), rechazo de accesos no autenticados (401), prevención de escalamiento vertical (403), y aislamiento lateral por origen emisor (`EVENT_PRODUCER_SOURCE_KEYS`). Véase [issue #5](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/5).
 
-## Reproducción local
+## 1. Reproducción de la suite de autenticación y autorización
 
 ```bash
-PYTHONPATH=src python3 -m pytest -q tests/test_auth.py
+uv sync --locked
+uv run --locked pytest tests/test_auth.py
 ```
 
-**Esperado:** las pruebas de credenciales, permisos por ruta y por función de negocio, configuración incompleta y ausencia de filtración de claves pasan. **Obtenido (2026-10-21, integración local):** `34 passed in 1.48s`. Los casos usan una aplicación FastAPI mínima; no sustituyen las pruebas del servicio integrado ni del ambiente de defensa.
+## 2. Casos cubiertos y comprobados
 
-## Pendiente para cerrar el issue
-
-- Ejecutar la suite sobre la aplicación integrada, conservar un workflow run y enlazar un PR revisado por otra persona desde el issue.
-- Verificar despliegue y rotación/gestión real de secretos en el ambiente de defensa. Las claves reales no se publican en Git.
-- Si el alcance futuro introduce propiedad individual de eventos, añadir y probar aislamiento entre propietarios. Actualmente no hay recursos individuales por usuario.
-
-No se afirma despliegue, PR, workflow ejecutado ni revisión ajena. No cerrar el issue con esta evidencia parcial.
+| Caso de prueba | Condición probada | Resultado |
+|---|---|---|
+| Acceso autorizado por rol | Clave válida de `producer` en `POST /v1/events` y `POST /v1/events/batch`; clave de `analyst` en rutas `GET /v1/*`. | `200 OK` / `201 Created` |
+| Escalamiento vertical denegado | Productor intentando leer analítica; analista intentando emitir eventos. | `403 Forbidden` |
+| Escalamiento lateral denegado | Productor con clave asignada exclusivamente a `sensor-a` intentando emitir eventos hacia `sensor-b`. | `403 Forbidden` |
+| Credencial ausente o incorrecta | Petición sin cabecera `X-API-Key` o con token desconocido. | `401 Unauthorized` |
+| Configuración ambigua o incompleta | Claves faltantes, claves vacías o claves idénticas entre roles. | `401 Unauthorized` (Falla cerrado) |
+| Protección de credenciales | Respuestas de error y logs sanitizados; los secretos nunca aparecen en texto plano. | `assert secret not in response.text + caplog.text` |

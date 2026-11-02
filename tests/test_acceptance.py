@@ -415,3 +415,199 @@ def test_counts_reject_invalid_query(
 def test_health_endpoints_are_public(client: TestClient) -> None:
     assert client.get("/health/live").status_code == 200
     assert client.get("/health/ready").status_code == 200
+
+
+def test_batch_ingestion_success_and_atomic_rollback_on_duplicate(
+    client: TestClient,
+    new_source: Callable[[], str],
+    window: tuple[datetime, datetime],
+) -> None:
+    source = new_source()
+    start, end = window
+    batch_payload = {
+        "events": [
+            {
+                "source": source,
+                "external_id": f"batch-{i}",
+                "type": "temp",
+                "occurred_at": (start + timedelta(minutes=i)).isoformat(),
+                "payload": {"value": 20.0 + i},
+            }
+            for i in range(3)
+        ]
+    }
+    # Success batch
+    res = client.post("/v1/events/batch", headers=PRODUCER, json=batch_payload)
+    assert res.status_code == 201
+    assert res.json()["inserted"] == 3
+    assert len(res.json()["events"]) == 3
+
+    # Intra-batch duplicate rejection
+    intra_duplicate = {
+        "events": [
+            {
+                "source": source,
+                "external_id": "duplicate-in-batch",
+                "type": "temp",
+                "occurred_at": start.isoformat(),
+                "payload": {"value": 1.0},
+            },
+            {
+                "source": source,
+                "external_id": "duplicate-in-batch",
+                "type": "temp",
+                "occurred_at": (start + timedelta(minutes=1)).isoformat(),
+                "payload": {"value": 2.0},
+            },
+        ]
+    }
+    dup_res = client.post("/v1/events/batch", headers=PRODUCER, json=intra_duplicate)
+    assert dup_res.status_code == 409
+    assert dup_res.json()["error"]["code"] == "DUPLICATE"
+
+    # Inter-batch duplicate causes atomic rollback (ext-999 is never inserted)
+    inter_duplicate = {
+        "events": [
+            {
+                "source": source,
+                "external_id": "ext-999",
+                "type": "temp",
+                "occurred_at": start.isoformat(),
+                "payload": {"value": 999.0},
+            },
+            {
+                "source": source,
+                "external_id": "batch-0",  # collision with already saved item
+                "type": "temp",
+                "occurred_at": start.isoformat(),
+                "payload": {"value": 0.0},
+            },
+        ]
+    }
+    res_rollback = client.post(
+        "/v1/events/batch", headers=PRODUCER, json=inter_duplicate
+    )
+    assert res_rollback.status_code == 409
+
+    # Verify ext-999 was not persisted
+    listed = client.get(
+        "/v1/events",
+        headers=ANALYST,
+        params={"from": start.isoformat(), "to": end.isoformat(), "source": source},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 3
+    assert all(ev["external_id"] != "ext-999" for ev in listed.json()["items"])
+
+
+def test_events_listing_and_pagination(
+    client: TestClient,
+    new_source: Callable[[], str],
+    window: tuple[datetime, datetime],
+) -> None:
+    source = new_source()
+    start, end = window
+    for i in range(4):
+        _post(
+            client,
+            source,
+            start + timedelta(minutes=i * 5),
+            external_id=f"page-{i}",
+            event_type="metrics" if i % 2 == 0 else "status",
+        )
+
+    # Page 1 (limit 2, offset 0)
+    page1 = client.get(
+        "/v1/events",
+        headers=ANALYST,
+        params={
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "source": source,
+            "limit": 2,
+            "offset": 0,
+        },
+    )
+    assert page1.status_code == 200
+    data1 = page1.json()
+    assert data1["total"] == 4
+    assert len(data1["items"]) == 2
+    assert data1["items"][0]["external_id"] == "page-0"
+    assert data1["items"][1]["external_id"] == "page-1"
+
+    # Filtered by type
+    filtered = client.get(
+        "/v1/events",
+        headers=ANALYST,
+        params={
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "source": source,
+            "type": "status",
+        },
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 2
+    assert all(item["type"] == "status" for item in filtered.json()["items"])
+
+
+def test_timeseries_analytics(
+    client: TestClient,
+    new_source: Callable[[], str],
+    window: tuple[datetime, datetime],
+) -> None:
+    source = new_source()
+    start, end = window
+    _post(client, source, start + timedelta(minutes=5))
+    _post(client, source, start + timedelta(minutes=20))
+    _post(client, source, start + timedelta(minutes=45))
+
+    ts = client.get(
+        "/v1/analysis/timeseries",
+        headers=ANALYST,
+        params={
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "bucket": "hour",
+            "source": source,
+        },
+    )
+    assert ts.status_code == 200
+    body = ts.json()
+    assert body["bucket"] == "hour"
+    assert body["total"] == 3
+    assert len(body["points"]) == 1
+    assert body["points"][0]["count"] == 3
+
+
+def test_summary_analytics(
+    client: TestClient,
+    new_source: Callable[[], str],
+    window: tuple[datetime, datetime],
+) -> None:
+    source = new_source()
+    start, end = window
+    _post(client, source, start, payload={"temp": 15.0})
+    _post(client, source, start + timedelta(minutes=10), payload={"temp": 25.0})
+    _post(client, source, start + timedelta(minutes=20), payload={"temp": 35.0})
+
+    summary = client.get(
+        "/v1/analysis/summary",
+        headers=ANALYST,
+        params={
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "source": source,
+            "numeric_field": "temp",
+        },
+    )
+    assert summary.status_code == 200
+    data = summary.json()
+    assert data["total_events"] == 3
+    assert data["unique_sources"] == 1
+    assert data["numeric_summary"]["field"] == "temp"
+    assert data["numeric_summary"]["samples"] == 3
+    assert data["numeric_summary"]["min"] == 15.0
+    assert data["numeric_summary"]["max"] == 35.0
+    assert data["numeric_summary"]["avg"] == 25.0
+

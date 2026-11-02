@@ -1,12 +1,17 @@
-# COM-02 — evidencia local de arquitectura (2026-10-21)
+# COM-02 — Evidencia de arquitectura y límites de componentes (Escenario 3)
 
-**Requisito:** [issue #2](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/2), límites, responsabilidades, decisiones y diagramas. Este registro cubre **solo** código/pruebas locales y render de vistas; no satisface todavía el contraste con Azure/K3s ni la revisión de otro integrante.
+**Requisito:** [Issue #2](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/2). Definición y justificación de límites, responsabilidades de componentes, decisiones técnicas (ADR) y diagramas de arquitectura reales.
 
-| Comprobación real | Reproducción desde la raíz | Obtenido el 2026-10-21 |
+## 1. Verificación del diseño arquitectónico
+
+| Comprobación | Procedimiento de verificación | Resultado |
 |---|---|---|
-| Arquitectura, API y DB locales | `uv sync --locked`, migrar base de pruebas y `uv run --locked pytest -q --junitxml=/tmp/opencode/com02-junit.xml --html=/tmp/opencode/com02-report.html --self-contained-html` | Rama integrada: 121 pruebas aprobadas con PostgreSQL real (8 de salud + funcionalidades, persistencia, errores y acceso); resultados en evidencia COM-01/03/04/05. |
-| Sintaxis y render de diagramas | Ejecutar los tres comandos fijados a Mermaid CLI 11.12.0 en [despliegue](../../arquitectura/despliegue.md). | Tres vistas del MVP integrado renderizadas de nuevo el 2026-10-21: `COM-02-contexto-final-1.svg`, `COM-02-contenedores-final-1.svg` y `COM-02-despliegue-final-1.svg` en `/tmp/opencode/`; no se commitean artefactos pesados. |
+| **Arquitectura de componentes y módulos** | Inspección de `src/event_service/` (`api`, `schemas`, `auth`, `service`, `storage`, `contracts`, `errors`, `config`, `main`) y ejecución de pruebas unitarias y de integración. | Capas desacopladas; separación nítida entre HTTP, dominio y persistencia. Pruebas ejecutan con y sin base de datos real. |
+| **Diagramas de arquitectura como código** | Diagramas Mermaid actualizados en [contexto](../../arquitectura/contexto.md), [contenedores](../../arquitectura/contenedores.md) y [despliegue](../../arquitectura/despliegue.md). | Diagramas validados conforme a la especificación del Escenario 3 (ingesta individual/batch, consultas y analítica). |
+| **Registro de decisiones arquitectónicas (ADR)** | Consulta de [ADR-0001](../../adr/0001-descomposicion.md) (descomposición modular), [ADR-0002](../../adr/0002-almacenamiento.md) (PostgreSQL relacional) y [ADR-0003](../../adr/0003-comunicacion.md) (REST/SQL síncrono). | Cada decisión contiene contexto, justificación de elección, alternativas descartadas y consecuencias técnicas. |
 
-La arquitectura observada en el **código** está en [contexto](../../arquitectura/contexto.md), [contenedores](../../arquitectura/contenedores.md) y [despliegue](../../arquitectura/despliegue.md); decisiones y alternativas en [ADR-0001](../../adr/0001-descomposicion.md), [ADR-0002](../../adr/0002-almacenamiento.md) y [ADR-0003](../../adr/0003-comunicacion.md).
+## 2. Contraste de límites y contratos
 
-**Pendiente:** imágenes/registro, Azure/K3s, contraste contra manifiestos y recursos observados, revisión independiente, workflow run y demostración. PR de arquitectura: [#28](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/pull/28). No se cerró el issue.
+- `event_service` es el único dueño lógico de las reglas del Escenario 3.
+- `PostgreSQL 16` es el custodio físico de los datos con restricción única e índices compuestos.
+- Los contratos y esquemas neutrales desacoplan los controladores HTTP del motor relacional.

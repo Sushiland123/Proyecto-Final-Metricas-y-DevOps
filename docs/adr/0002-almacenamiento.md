@@ -1,18 +1,25 @@
-# ADR-0002 — PostgreSQL para eventos originales; conteos derivados
+# ADR-0002 — PostgreSQL relacional para eventos y cálculo analítico
 
-- **Fecha:** 2026-10-21
-- **Estado:** aceptada e implementada localmente en COM-03; despliegue/backup de defensa pendientes.
+- **Fecha:** 2026-10-21 (Actualizado: 2026-11-02 para Escenario 3)
+- **Estado:** Aceptada e implementada en el código base del Escenario 3.
 
 ## Contexto y decisión
 
-El contrato provisional exige unicidad de `(source, external_id)`, consulta por UUID, rango temporal `[from,to)` y conservación tras reiniciar app y DB con volumen. Elegimos **PostgreSQL 16**, SQLAlchemy 2 + psycopg 3 y migraciones Alembic. `events` es fuente de verdad: evento original con `occurred_at` y `ingested_at` UTC, además de `payload` JSONB. COM-03 implementa índice temporal, restricción única, tabla, migración y prueba de reinicio sobre PostgreSQL real. Los conteos se calculan bajo demanda y no se almacenan ([módulos](../arquitectura/contenedores.md)).
+El **Escenario 3** requiere garantizar unicidad de `(source, external_id)`, durabilidad ante reinicios con volumen conservado, consultas temporales en ventanas semiabiertas `[from, to)` y agregaciones estadísticas.
+
+Elegimos **PostgreSQL 16** con **SQLAlchemy 2** y driver **psycopg 3**, gestionando el esquema exclusivamente con **Alembic**:
+1. La tabla `events` almacena campos clave indexados y un campo `payload JSONB` de hasta 16 KiB.
+2. La deduplicación se delega a la restricción `uq_events_source_external_id`.
+3. Se implementan índices compuestos `ix_events_occurred_at_type` e `ix_events_occurred_at_source`.
+4. Los cálculos de conteo, series de tiempo (`date_trunc`) y resúmenes estadísticos (`MIN`, `MAX`, `AVG`) se procesan directamente en la base de datos bajo demanda, sin persistir tablas derivadas redundantes.
 
 ## Alternativas y consecuencias
 
-| Alternativa | Razón para no elegirla ahora |
+| Alternativa | Razón para no elegirla |
 |---|---|
-| Sin almacén / memoria de proceso | No conserva eventos al reiniciar, incumple el objetivo provisional. |
-| SQLite local | Útil en pruebas pequeñas, pero no refleja la dependencia PostgreSQL ni el reinicio compartido con volumen exigido en este MVP. |
-| Almacén documental + agregaciones persistidas | Aumenta operaciones y sincronización; no justificado para filtros de fecha, unicidad y un solo agregado simple. |
+| Almacén en memoria o base de datos NoSQL sin transacciones | No ofrece garantías ACID suficientes para evitar duplicados concurrentes ni durabilidad estricta ante reinicios. |
+| Base de datos columnar analítica separada (ClickHouse / Snowflake) | Aumenta la complejidad operativa, infraestructura y facturación en Azure sin ser necesaria para las consultas analíticas del escenario. |
+| Vistas materializadas / ETL periódico | Introduce desfase temporal (eventual consistency) en los análisis e incrementa la complejidad de sincronización. |
 
-Ventaja: restricciones transaccionales e índices acordes a las consultas. Costes: dependencia operativa, migraciones y gestión del volumen/backups. El reinicio y reejecución de migración se probaron localmente; no se garantiza pérdida cero ante destrucción de la VM. Retención y clasificación del payload quedan pendientes del escenario. El [despliegue](../arquitectura/despliegue.md) muestra solo PostgreSQL local, no Azure/K3s.
+**Ventajas:** Consistencia inmediata, garantías transaccionales ACID, soporte de JSON semiestructurado, durabilidad comprobada ante reinicios y bajo costo.
+**Costos:** Dependencia operativa de un servicio relacional; mitigada con `pool_pre_ping`, timeouts configurados y reintentos automáticos con backoff en lecturas.

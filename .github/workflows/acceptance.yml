@@ -30,6 +30,7 @@ jobs:
       TEST_DATABASE_URL: postgresql+psycopg://acceptance:ci-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/events_test
       EVENT_PRODUCER_KEY: ci-producer-${{ github.run_id }}-${{ github.run_attempt }}
       EVENT_ANALYST_KEY: ci-analyst-${{ github.run_id }}-${{ github.run_attempt }}
+      EVENT_PRODUCER_SOURCE_KEYS: sensor-a:ci-sensor-a-${{ github.run_id }},sensor-b:ci-sensor-b-${{ github.run_id }}
       PYTHONPATH: src
     steps:
       - uses: actions/checkout@v4

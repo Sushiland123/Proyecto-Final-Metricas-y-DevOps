@@ -1,4 +1,4 @@
-"""Composición HTTP y sondas de salud del prototipo."""
+"""Composición HTTP y sondas de salud del servicio de ingesta y análisis de eventos."""
 
 from fastapi import FastAPI, Request
 from sqlalchemy import create_engine, text
@@ -21,6 +21,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings if settings is not None else Settings.from_env()
     app = FastAPI(title="Event service")
     app.state.settings = resolved
+    app.state.explicit_settings = settings
     app.state.engine = None
     if resolved.database_url is not None:
         try:

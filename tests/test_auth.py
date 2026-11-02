@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from event_service.auth import (
     Principal,
     ensure_permission,
+    ensure_source_access,
     require_analyst,
     require_producer,
 )
@@ -19,6 +20,7 @@ from event_service.auth import (
 def isolated_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EVENT_PRODUCER_KEY", raising=False)
     monkeypatch.delenv("EVENT_ANALYST_KEY", raising=False)
+    monkeypatch.delenv("EVENT_PRODUCER_SOURCE_KEYS", raising=False)
 
 
 @pytest.fixture
@@ -188,3 +190,87 @@ def test_credentials_never_appear_in_responses_or_logs(
         assert secret not in caplog.text
         for response in responses:
             assert secret not in response.text
+
+
+def test_source_scoped_producer_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EVENT_PRODUCER_KEY", "global-producer-key")
+    monkeypatch.setenv("EVENT_ANALYST_KEY", "analyst-key")
+    monkeypatch.setenv(
+        "EVENT_PRODUCER_SOURCE_KEYS", "sensor-a:scoped-key-a,sensor-b:scoped-key-b"
+    )
+
+    app = FastAPI()
+
+    @app.post("/v1/events/{source}")
+    def create_event(
+        source: str,
+        principal: Annotated[Principal, Depends(require_producer)],
+    ) -> dict:
+        ensure_source_access(principal, source)
+        return {"role": principal.role, "source": source}
+
+    client = TestClient(app)
+
+    # Scoped producer can publish to authorized source
+    ok_a = client.post("/v1/events/sensor-a", headers={"X-API-Key": "scoped-key-a"})
+    assert ok_a.status_code == 200
+    assert ok_a.json() == {"role": "producer", "source": "sensor-a"}
+
+    # Scoped producer cannot publish to another source (lateral isolation)
+    forbidden = client.post(
+        "/v1/events/sensor-b", headers={"X-API-Key": "scoped-key-a"}
+    )
+    assert forbidden.status_code == 403
+
+    # Global producer can publish to any source
+    global_a = client.post(
+        "/v1/events/sensor-a", headers={"X-API-Key": "global-producer-key"}
+    )
+    assert global_a.status_code == 200
+    global_b = client.post(
+        "/v1/events/sensor-b", headers={"X-API-Key": "global-producer-key"}
+    )
+    assert global_b.status_code == 200
+
+    # Analyst cannot publish even with analyst key
+    analyst_try = client.post(
+        "/v1/events/sensor-a", headers={"X-API-Key": "analyst-key"}
+    )
+    assert analyst_try.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "bad_source_keys",
+    [
+        "invalid source format:key1",
+        "sensor-a",
+        "sensor-a:key1,sensor-a:key2",
+        "sensor-a:global-producer-key",
+        "sensor-a:analyst-key",
+    ],
+)
+def test_malformed_or_colliding_source_keys_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, bad_source_keys: str
+) -> None:
+    monkeypatch.setenv("EVENT_PRODUCER_KEY", "global-producer-key")
+    monkeypatch.setenv("EVENT_ANALYST_KEY", "analyst-key")
+    monkeypatch.setenv("EVENT_PRODUCER_SOURCE_KEYS", bad_source_keys)
+
+    app = FastAPI()
+
+    @app.post("/v1/events/{source}")
+    def create_event(
+        source: str,
+        principal: Annotated[Principal, Depends(require_producer)],
+    ) -> dict:
+        ensure_source_access(principal, source)
+        return {"ok": True}
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/events/sensor-a", headers={"X-API-Key": "global-producer-key"}
+    )
+    assert response.status_code == 401
+
