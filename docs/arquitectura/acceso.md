@@ -1,14 +1,58 @@
-# Acceso provisional del MVP (COM-05)
+# Control de acceso y autorización — Escenario 3 (COM-05)
 
-Esta es una **decisión provisional del MVP**, no una afirmación de que el escenario original exija estos roles. La aplicación usa dos claves de API distintas, enviadas en el encabezado `X-API-Key`. Las claves se leen de `EVENT_PRODUCER_KEY` y `EVENT_ANALYST_KEY` en el entorno del proceso; no se incluyen en Git, imágenes, clientes, respuestas ni logs.
+Este documento detalla el modelo de control de acceso, segregación de roles y aislamiento por origen implementado para el **Escenario 3: Ingesta y Análisis de Eventos**, en cumplimiento de **COM-05**.
 
-| Operación | `producer` | `analyst` | Sin clave o clave incorrecta |
-|---|---|---|---|
-| `POST /v1/events` (`events:create`) | Permitida | 403 | 401 |
-| `GET /v1/events/{id}` (`events:read`) | 403 | Permitida | 401 |
-| `GET /v1/analysis/counts` (`analysis:read`) | 403 | Permitida | 401 |
-| `GET /health/live`, `GET /health/ready` | Pública | Pública | Pública |
+---
 
-`require_producer` y `require_analyst` son dependencias FastAPI para verificar la clave y el rol **en cada ruta protegida**; devuelven un `Principal(role=...)`. La función propietaria de cada operación debe llamar también a `ensure_permission(principal, action)` antes de efectuarla, incluso si la ruta ya verificó el rol. Una clave válida de otro rol produce 403; una ausente o incorrecta produce 401. Si falta alguna de las dos claves de entorno, está vacía (o sólo contiene espacios), o ambas claves son idénticas, **ningún rol** puede autenticarse. Las comparaciones de claves usan `compare_digest`. Los detalles de error son genéricos; el formateo del error HTTP común corresponde al manejador de errores de la aplicación.
+## 1. Modelo de Actores y Roles
 
-Las pruebas en `tests/test_auth.py` comprueban permisos por ruta y por servicio, claves inexistentes o inválidas, configuración incompleta, claves iguales y escalamiento vertical (uso de una clave válida contra operaciones del otro rol). **No existe propiedad individual de eventos ni aislamiento por usuario en este MVP**, así que no aplica una prueba de escalamiento lateral; deberá agregarse si se incorporan recursos con propietario individual. Estos controles son de aplicación y no sustituyen TLS, gestión/rotación de secretos ni controles de red del despliegue.
+La plataforma define dos roles principales y un mecanismo de restricción de ámbito por origen de datos:
+
+1. **`producer` (Productor de eventos):** Responsable exclusivo de la emisión de telemetría e ingesta de datos (`events:create`). No tiene autorización para inspeccionar eventos de otros productores ni ejecutar consultas o análisis agregados (`events:read`, `analysis:read`).
+2. **`analyst` (Analista / Consumidor de analítica):** Autorizado para realizar exploración individual (`GET /v1/events/{id}`), consultas paginadas (`GET /v1/events`), conteos dimensionales (`GET /v1/analysis/counts`), series de tiempo (`GET /v1/analysis/timeseries`) y resúmenes estadísticos (`GET /v1/analysis/summary`). No tiene autorización para crear ni modificar eventos (`events:create`).
+3. **`operator` (Sonda de infraestructura / K3s):** No requiere autenticación para inspeccionar la salud técnica del sistema (`/health/live`, `/health/ready`).
+
+### Matriz de Control de Acceso (Operación vs Rol)
+
+| Endpoint / Operación | Permiso requerido | Rol `producer` (Global) | Rol `producer` (Source Scoped) | Rol `analyst` | Sin clave / Clave inválida |
+|---|---|---|---|---|---|
+| `POST /v1/events` | `events:create` | **Permitida** | **Permitida si `source ∈ allowed_sources`**; de lo contrario **403 Forbidden** | 403 Forbidden | 401 Unauthorized |
+| `POST /v1/events/batch` | `events:create` | **Permitida** | **Permitida si todos los `source ∈ allowed_sources`**; de lo contrario **403 Forbidden** | 403 Forbidden | 401 Unauthorized |
+| `GET /v1/events/{id}` | `events:read` | 403 Forbidden | 403 Forbidden | **Permitida** | 401 Unauthorized |
+| `GET /v1/events` | `events:read` | 403 Forbidden | 403 Forbidden | **Permitida** | 401 Unauthorized |
+| `GET /v1/analysis/counts` | `analysis:read` | 403 Forbidden | 403 Forbidden | **Permitida** | 401 Unauthorized |
+| `GET /v1/analysis/timeseries` | `analysis:read` | 403 Forbidden | 403 Forbidden | **Permitida** | 401 Unauthorized |
+| `GET /v1/analysis/summary` | `analysis:read` | 403 Forbidden | 403 Forbidden | **Permitida** | 401 Unauthorized |
+| `GET /health/live` | Público | **Permitida** | **Permitida** | **Permitida** | **Permitida** |
+| `GET /health/ready` | Público | **Permitida** | **Permitida** | **Permitida** | **Permitida** |
+
+---
+
+## 2. Aislamiento lateral por fuente (Source Scoping)
+
+Para prevenir el escalamiento lateral (donde un sensor o sistema externo suplanta a otro origen de telemetría), la plataforma admite la variable `EVENT_PRODUCER_SOURCE_KEYS`:
+- Formato: `fuente1:clave1,fuente2:clave2`.
+- Si un productor autentica con la clave de `sensor-a`, su objeto `Principal` queda restringido a `allowed_sources = {"sensor-a"}`.
+- Cualquier intento de emitir eventos individuales o en lote hacia `sensor-b` es rechazado inmediatamente con `403 Forbidden` (`ensure_source_access`).
+- La clave global de productor (`EVENT_PRODUCER_KEY`) mantiene `allowed_sources = None` para sistemas autorizados a emitir multi-fuente.
+
+---
+
+## 3. Principios de seguridad y falla cerrada
+
+- **Doble verificación (Defensa en profundidad):** La autenticación y el rol se validan en la cabecera HTTP mediante dependencias FastAPI (`require_producer`, `require_analyst`). Adicionalmente, cada función de servicio (`create_event`, `create_events_batch`, `get_event`, `list_events`, `count_events`, `analyze_timeseries`, `analyze_summary`) vuelve a invocar `ensure_permission` y `ensure_source_access` antes de acceder al repositorio.
+- **Falla cerrada (Fail-Safe Defaults):** Si alguna de las claves requeridas no está definida en el entorno, contiene solo espacios en blanco, ambas claves principales son idénticas, o existen colisiones entre claves de fuente y claves globales, el módulo de autenticación invalida la configuración y **rechaza toda petición protegida con 401 Unauthorized**.
+- **Comparación en tiempo constante:** Todas las verificaciones de credenciales emplean `hmac.compare_digest` para evitar ataques de temporización (timing attacks).
+- **Protección de secretos en logs y respuestas:** Los valores de las claves nunca se imprimen en logs, respuestas de error ni volcados de traceback (`Settings` utiliza `SecretStr` y `repr=False`).
+
+---
+
+## 4. Evidencia verificable
+
+Las pruebas automatizadas en `tests/test_auth.py` y `tests/test_acceptance.py` demuestran de forma exhaustiva:
+1. Acceso autorizado para productores y analistas en todas las rutas protegidas.
+2. Prevención de escalamiento vertical (403 cuando un productor intenta consultar analítica o un analista intenta emitir eventos).
+3. Prevención de escalamiento lateral (403 cuando un productor restringido intenta emitir hacia una fuente no asignada).
+4. Rechazo de accesos no autenticados o con claves mal formadas (401).
+5. Falla cerrada ante configuraciones incompletas o colisiones de claves.
+6. Ausencia de secretos en respuestas HTTP y registros de logs.

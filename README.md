@@ -6,13 +6,26 @@ Repositorio de trabajo del proyecto final. El backlog está compuesto por **27 i
 
 - **URL:** <https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps>
 - **Milestones:** `3.1 Aplicación y arquitectura`, `3.2 DevOps` y `3.3 Métricas de Software y observabilidad`
-- **Estado:** MVP local de ingesta y análisis de eventos integrado en `main`; issues #1–#6 abiertos hasta revisión/defensa; despliegue Azure/K3s, costos reales y requisitos MET pendientes.
+- **Escenario asignado:** **Escenario 3: Ingesta y Análisis de Eventos** (requisitos COM-01 a COM-06).
 
-## MVP local de ingesta y análisis de eventos
+---
 
-Se ofrece una API FastAPI con PostgreSQL 16: ingresar eventos (`POST /v1/events`), recuperarlos (`GET /v1/events/{id}`) y contar por tipo o fuente en una ventana `[from,to)` (`GET /v1/analysis/counts`). Los roles elegidos `producer` y `analyst` usan claves distintas por `X-API-Key`. El alcance recibido es el tema «Ingesta y Análisis de Eventos» y los requisitos comunes; el [contrato y matriz de pruebas](docs/escenario.md) explicitan las decisiones del MVP.
+## Escenario 3: Ingesta y Análisis de Eventos (COM-01 a COM-06)
 
-Requiere Python 3.12/3.13, [`uv`](https://docs.astral.sh/uv/) y Docker Compose o Podman Compose. Desde la raíz del repositorio, **solo con una base local descartable nueva**:
+Se implementa una plataforma de ingesta y análisis analítico de eventos sobre FastAPI y PostgreSQL 16 con SQLAlchemy 2 y psycopg 3:
+- **Ingesta individual (`POST /v1/events`) y en lote atómico (`POST /v1/events/batch`):** Inserción transaccional con deduplicación estricta por tupla `(source, external_id)`.
+- **Exploración de eventos (`GET /v1/events` y `GET /v1/events/{id}`):** Consulta puntual por UUID y listado paginado (`limit`, `offset`) con filtros opcionales por fuente y tipo sobre ventana semiabierta UTC `[from, to)`.
+- **Análisis y agregaciones (`GET /v1/analysis/*`):** Conteos dimensionales por tipo o fuente (`/counts`), análisis de series temporales por intervalos (`/timeseries` con buckets `minute`, `hour`, `day`) y resúmenes estadísticos (`/summary` con min, max, avg de campos numéricos del JSONB).
+- **Control de acceso y segregación (COM-05):** RBAC estricto mediante cabecera `X-API-Key` (`producer` para ingesta, `analyst` para lectura) y soporte de aislamiento lateral por fuente emisora (`EVENT_PRODUCER_SOURCE_KEYS`).
+- **Resiliencia y manejo de errores (COM-04):** Manejo de errores seguros y estructurados con `X-Request-ID`, `pool_pre_ping=True`, timeouts acotados y reintentos con backoff en lecturas operacionales.
+
+Consulte la [matriz de reglas y contratos del Escenario 3](docs/escenario.md) para la trazabilidad completa regla → prueba.
+
+---
+
+## Arranque local reproducible
+
+Requiere Python 3.12 o 3.13, [`uv`](https://docs.astral.sh/uv/) y Docker Compose o Podman Compose. Desde la raíz del repositorio:
 
 ```bash
 uv sync --locked
@@ -20,10 +33,11 @@ uv sync --locked
 cat > .env <<EOF
 POSTGRES_USER=events
 POSTGRES_DB=events_test
-POSTGRES_PORT=5432
+POSTGRES_PORT=15433
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 EVENT_PRODUCER_KEY=$(openssl rand -hex 16)
 EVENT_ANALYST_KEY=$(openssl rand -hex 16)
+EVENT_PRODUCER_SOURCE_KEYS=sensor-a:$(openssl rand -hex 16),sensor-b:$(openssl rand -hex 16)
 EOF
 set -a; . ./.env; set +a
 cat >> .env <<EOF
@@ -33,49 +47,74 @@ EOF
 set -a; . ./.env; set +a
 chmod 600 .env
 
+# Iniciar contenedor PostgreSQL de prueba
 docker compose up -d postgres
+
+# Esperar a que PostgreSQL esté listo
 for intento in $(seq 1 30); do
   if docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"; then
     break
   fi
   sleep 1
 done
-docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" || {
-  echo "PostgreSQL no respondió; revisá 'docker compose logs postgres'." >&2
-  exit 1
-}
+
+# Aplicar migraciones versionadas (incluye tabla e índices compuestos)
 uv run --locked alembic upgrade head
+
+# Iniciar servicio web
 uv run uvicorn event_service.main:app --host 127.0.0.1 --port 8000
 ```
 
-`.env` ya está en `.gitignore`: no lo commitees. Guardá las claves en un gestor de secretos si las necesitás tras cerrar la terminal: **un volumen ya inicializado conserva la contraseña original**, aunque generes un `.env` nuevo. No usar estos comandos sobre una base de producción ni ejecutar `docker compose down -v` sobre datos que quieras conservar.
-
-En otra terminal, cargá el mismo `.env` y probá la API:
+`.env` está en `.gitignore`: no lo commitees. En otra terminal con el mismo `.env`, prueba la API:
 
 ```bash
 set -a; . ./.env; set +a
+
+# 1. Sondas de salud
 curl -i http://127.0.0.1:8000/health/live
 curl -i http://127.0.0.1:8000/health/ready
+
+# 2. Ingesta puntual (Rol producer)
 curl -i -H "X-API-Key: $EVENT_PRODUCER_KEY" -H 'Content-Type: application/json' \
   -d '{"source":"sensor-a","external_id":"e-001","type":"temperature","occurred_at":"2026-10-21T12:00:00Z","payload":{"value":23.5}}' \
   http://127.0.0.1:8000/v1/events
+
+# 3. Ingesta en lote atómica (Rol producer)
+curl -i -H "X-API-Key: $EVENT_PRODUCER_KEY" -H 'Content-Type: application/json' \
+  -d '{"events":[{"source":"sensor-a","external_id":"e-002","type":"temperature","occurred_at":"2026-10-21T12:05:00Z","payload":{"value":24.1}},{"source":"sensor-a","external_id":"e-003","type":"temperature","occurred_at":"2026-10-21T12:10:00Z","payload":{"value":22.8}}]}' \
+  http://127.0.0.1:8000/v1/events/batch
+
+# 4. Exploración paginada (Rol analyst)
+curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
+  --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
+  --data-urlencode 'source=sensor-a' --data-urlencode 'limit=10' \
+  http://127.0.0.1:8000/v1/events
+
+# 5. Agregación y conteos por dimensión (Rol analyst)
 curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
   --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
   --data-urlencode 'group_by=type' http://127.0.0.1:8000/v1/analysis/counts
-mkdir -p /tmp/opencode
-uv run --locked pytest --junitxml=/tmp/opencode/event-service-junit.xml \
-  --html=/tmp/opencode/event-service-report.html --self-contained-html
+
+# 6. Análisis de series temporales (Rol analyst)
+curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
+  --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
+  --data-urlencode 'bucket=hour' http://127.0.0.1:8000/v1/analysis/timeseries
+
+# 7. Resumen estadístico sobre carga útil (Rol analyst)
+curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
+  --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
+  --data-urlencode 'numeric_field=value' http://127.0.0.1:8000/v1/analysis/summary
+
+# 8. Ejecución de la suite completa de pruebas
+mkdir -p artifacts
+uv run --locked pytest --junitxml=artifacts/junit.xml --html=artifacts/acceptance.html --self-contained-html
 ```
 
-La [arquitectura local](docs/arquitectura/contexto.md), [trade-offs COM-06](docs/arquitectura/tradeoffs.md), [ADRs](docs/adr/0001-descomposicion.md) y `docs/evidencia/COM-0X/` describen decisiones y pruebas. El workflow de aceptación ejecuta migraciones y **121 pruebas con PostgreSQL 16** en PR/main, y adjunta JUnit/HTML. Azure, K3s, imágenes y la plataforma MET **aún no están desplegados** por estos seis issues.
-
-## Estado de la entrega
-
-COM-01…COM-06 están integrados en `main` mediante los PRs #28–#36. Los issues #1–#6 siguen abiertos **a propósito**: el merge integra el código, pero el cierre requiere revisión y defensa. CI de `main`: [run #39669250513](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/actions/runs/39669250513), **121 pruebas** con PostgreSQL 16. Pendientes: DEV-03 (protección de `main`), DEV-06/09 (Azure/K3s), DEV-14 (costos) y MET.
+---
 
 ## Backlog
 
-### 3.1 Aplicación y arquitectura
+### 3.1 Aplicación y arquitectura (Escenario 3)
 
 | ID | Requisito | Evidencia mínima | Issue |
 |---|---|---|---|
@@ -117,49 +156,17 @@ COM-01…COM-06 están integrados en `main` mediante los PRs #28–#36. Los issu
 | MET-06 | Configurar alertas justificadas | Regla, activación y análisis de falsos positivos | [#26](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/26) |
 | MET-07 | Analizar una degradación inducida y su recuperación | Secuencia temporal, evidencia, interpretación y límites | [#27](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/27) |
 
-> **Anexo II, sección 8.2:** el detalle definitivo de indicadores y señales está en ese anexo. Si existe diferencia de redacción con este backlog, prevalece el anexo. Instalar una herramienta de monitoreo no satisface por sí solo los requisitos MET.
+---
 
-## Cómo se trabaja el backlog
+## Evidencia y Arquitectura
 
-1. Tomar un issue y moverlo a **In progress** en el Project o tablero del equipo.
-2. Crear una rama desde `main` con el ID del requisito.
-3. Implementar y adjuntar la evidencia en el issue (enlace a PR, workflow run, captura, log o documento).
-4. Abrir un PR que referencie el issue y completar la plantilla de revisión.
-5. Con checks en verde y al menos una revisión, integrar a `main`.
-6. Cerrar el issue solo cuando el Definition of Done esté completo y la evidencia esté enlazada.
-
-### Ramas y commits
-
-| Tipo | Patrón | Ejemplo |
-|---|---|---|
-| Funcionalidad | `feat/<ID>-<descripcion>` | `feat/COM-01-reglas-escenario` |
-| Infraestructura | `infra/<ID>-<descripcion>` | `infra/DEV-06-terraform-azure` |
-| CI/CD | `ci/<ID>-<descripcion>` | `ci/DEV-03-github-actions` |
-| Observabilidad | `obs/<ID>-<descripcion>` | `obs/MET-03-metricas-app` |
-| Documentación | `docs/<ID>-<descripcion>` | `docs/COM-02-arquitectura` |
-| Corrección | `fix/<ID>-<descripcion>` | `fix/COM-04-validacion-fechas` |
-
-Se usa [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `infra:`, `ci:`, `docs:`, `test:`, `chore:`.
-
-### Evidencia
-
-La evidencia vive en `docs/evidencia/<ID>/` cuando es texto o captura pequeña; los artefactos pesados (reportes, SBOM, planes de Terraform) se publican como artefactos del workflow y se enlazan desde el issue. Convenciones en [`docs/evidencia/README.md`](docs/evidencia/README.md).
-
-## Etiquetas
-
-| Etiqueta | Uso |
-|---|---|
-| `grupo:aplicacion` | Requisitos COM (3.1) |
-| `grupo:devops` | Requisitos DEV (3.2) |
-| `grupo:metricas` | Requisitos MET (3.3) |
-| `tipo:requisito` | Issue evaluable en la defensa |
-| `evidencia:defensa` | Produce evidencia verificable |
-
-## Alcance y supuestos
-
-- No hay una cantidad obligatoria de microservicios, bases de datos, colas, frameworks, VMs ni herramientas de monitoreo; la implementación responde al escenario.
-- La protección de `main` y la demostración de un check fallido siguen pendientes en DEV-03; el workflow de aceptación ya está versionado.
-- En 3.3 no basta con instalar una herramienta: se exigen indicadores, señales correlacionadas, dashboards, alertas y análisis de degradación según el Anexo II, sección 8.2.
-- Se admite un solo nodo K3s y no se exige alta disponibilidad entre zonas ni tolerancia a la pérdida total de la VM.
-- La inicialización mínima de identidades y del backend de estado puede ser manual, pero debe estar documentada y justificada (DEV-07 y DEV-13).
-- El ambiente se apaga o elimina cuando no se usa para mantener el consumo bajo US$100 (DEV-14).
+- [Especificación formal y matriz regla → test del Escenario 3](docs/escenario.md)
+- [Vista de contexto y límites (C4 Context)](docs/arquitectura/contexto.md)
+- [Vista de contenedores y módulos (C4 Container)](docs/arquitectura/contenedores.md)
+- [Vista de despliegue](docs/arquitectura/despliegue.md)
+- [Persistencia y durabilidad de datos](docs/arquitectura/persistencia.md)
+- [Manejo de errores, validación y recuperación](docs/arquitectura/errores.md)
+- [Control de acceso y segregación](docs/arquitectura/acceso.md)
+- [Registro de compromisos y trade-offs (COM-06)](docs/arquitectura/tradeoffs.md)
+- [ADRs del proyecto](docs/adr/0001-descomposicion.md)
+- Carpeta de evidencias por requisito: `docs/evidencia/COM-0X/`

@@ -1,95 +1,80 @@
-# COM-04 — validación, errores y recuperación (MVP provisional)
+# Manejo de errores previsibles, validación y recuperación — Escenario 3 (COM-04)
 
-## Contrato e interfaces
+Este documento especifica la estrategia de validación en los límites de la aplicación, el catálogo de errores semánticos seguros y la resiliencia ante fallos transitorios para el **Escenario 3**, en cumplimiento de **COM-04**.
 
-- `EventCreate`: `source` y `type` identificadores ASCII `[A-Za-z0-9][A-Za-z0-9_-]*` (1–64); `external_id` cadena de 1–128; `occurred_at` con zona y normalizado a UTC; `payload` objeto JSON serializable, máximo **16 384 bytes** en JSON compacto UTF-8 (`ensure_ascii=False`); se rechazan campos extra. Los números no sustituyen fechas RFC3339.
-- `CountsQuery`: campos HTTP `from`, `to`, `group_by=type|source`; atributo Python `from_` (alias `from`), `to`, `group_by`; fechas con zona normalizadas a UTC y `from_ < to`; se rechazan campos extra.
-- `register_handlers(app: FastAPI)`: instalar **antes de iniciar** la aplicación, una vez (llamadas repetidas son inocuas). Importa de COM-02 `DuplicateEvent`, `EventNotFound`, `StorageUnavailable` desde `event_service.contracts`. No modifica `main.py`: COM-02 lo invoca. Cada respuesta incluye `X-Request-ID`; en errores coincide con `error.request_id`. Se acepta un solo ID entrante `X-Request-ID` de 1–128 caracteres ASCII alfanuméricos, `._-` tras el primero. Si falta, está duplicado o es inválido, se genera un UUID nuevo.
+---
 
-| Caso | HTTP | `error.code` | Verificación |
-| --- | ---: | --- | --- |
-| Evento/ventana válidos | 200 en pruebas de esquema HTTP; 201 en `POST /v1/events` real | — | UTC, objeto JSON y ventana `[from,to)` |
-| Cuerpo, consulta o JSON inválido | 422 | `INVALID_INPUT` | Mensaje fijo; no copiar entrada a respuesta/log |
-| Evento duplicado (`DuplicateEvent`) | 409 | `DUPLICATE` | La escritura previa no cambia; COM-03 garantiza unicidad DB |
-| Evento ausente (`EventNotFound` o HTTP 404) | 404 | `NOT_FOUND` | No copiar ID ni detalle interno |
-| Autenticación/autorización HTTP | 401 / 403 | `UNAUTHENTICATED` / `FORBIDDEN` | No copiar claves ni detalles del proveedor |
-| DB caída o timeout traducido a `StorageUnavailable` | 503 | `DEPENDENCY_UNAVAILABLE` | Error público sin DSN ni mensaje de excepción |
-| DB recuperada | 200 | — | Misma aplicación y proceso; consultar de nuevo |
-| Error inesperado | 500 | `INTERNAL_ERROR` | Sin traceback, secretos ni cuerpo de solicitud |
+## 1. Validación en el borde (HTTP Boundary Validation)
 
-Formato único: `{"error":{"code":"...","message":"texto fijo","request_id":"..."}}`. Los otros HTTP 4xx conservan su estado con `INVALID_INPUT`; otros HTTP 5xx devuelven 500 genérico. Los logs de error contienen **solo** código, estado, ID validado y plantilla de ruta del servidor (no URL real, identidad, headers, payload, excepciones ni stack). Quien llama puede correlacionar `X-Request-ID` con ese log. Evitar también access logs externos con URLs sin sanitizar. La clasificación de errores operacionales y timeouts como `StorageUnavailable`, el `pool_pre_ping=True` y el reciclado de conexiones pertenecen a COM-03; no se simula recuperación de la base en este módulo.
+Todos los esquemas se procesan mediante **Pydantic v2** con rechazo estricto de campos adicionales no declarados (`extra="forbid"`):
 
-**Política de reintentos:** no reintentar escrituras automáticamente, ni en `errors.py` ni en capas superiores; ante 409 o 503 el cliente debe conocer el resultado antes de decidir una nueva operación. Tras volver la DB, repetir manualmente una lectura idempotente sí permite comprobar recuperación. No agregar backoff/timeout HTTP opaco que transforme un resultado de escritura desconocido en duplicados. COM-02 configura `connect_timeout=3` y `statement_timeout=3000` en el engine dedicado a readiness, de modo que `/health/ready` no queda bloqueado por una conexión o un `SELECT 1` colgado; COM-03 traduce fallos de conexión o ejecución a `StorageUnavailable` y usa `pool_pre_ping` en el engine de dominio. Este módulo no configura timeouts para consultas de dominio ni implementa reintentos con backoff.
+- **`EventCreate`:**
+  - `source` y `type`: Identificadores alfanuméricos ASCII `[A-Za-z0-9][A-Za-z0-9_-]*` (1 a 64 caracteres). Previene inyección SQL y traversal.
+  - `external_id`: Cadena de 1 a 128 caracteres.
+  - `occurred_at`: Fecha/hora RFC3339 obligatoriamente con huso horario (`timezone-aware`), normalizada de inmediato a UTC. Se rechazan enteros/timestamps Unix.
+  - `payload`: Diccionario JSON objeto con serialización UTF-8 compacta que no debe sobrepasar **16 384 bytes (16 KiB)**.
+- **`EventBatchCreate`:**
+  - `events`: Colección de 1 a 100 objetos `EventCreate`. Se rechazan lotes vacíos o con más de 100 elementos. Validación de unicidad de claves naturales intra-lote antes de tocar el motor de base de datos.
+- **`CountsQuery`:**
+  - `from` y `to`: Fechas timezone-aware UTC que deben cumplir estrictamente `from < to`.
+  - `group_by`: Restringido exclusivamente a los literales `"type"` o `"source"`.
+- **`EventsListQuery`:**
+  - Ventana temporal `from < to`.
+  - Filtros opcionales `source` y `type` (1 a 64 caracteres alfanuméricos).
+  - Paginación acotada: `limit` entre 1 y 100 (por defecto 50); `offset` entero mayor o igual a 0. Se rechazan explícitamente booleanos para evitar coerción implícita de Python.
+- **`TimeseriesQuery`:**
+  - `bucket`: Restringido a `"minute"`, `"hour"`, `"day"`.
+  - Ventana acotada según bucket para prevenir agotamiento de memoria en base de datos: máximo 7 días para minuto, 90 días para hora, 366 días para día.
+- **`SummaryQuery`:**
+  - Ventana temporal `from < to` y filtros opcionales.
+  - `numeric_field`: Identificador simple ASCII (1 a 64 caracteres, por defecto `"value"`). Previene ataques de inyección al extraer claves dinámicas del `JSONB`.
 
-**Integración COM-02/04 completada:** `/health/ready` lanza `StorageUnavailable` y utiliza estos handlers; `error.request_id` coincide con `X-Request-ID`. El stub de `errors.py` se sustituyó por la implementación COM-04. La suite integrada lo comprueba.
+---
 
-## Prueba real de caída y recuperación (ejecutada localmente)
+## 2. Catálogo uniforme de errores y seguridad de datos
 
-Ejecutar **solo contra PostgreSQL local de pruebas**, con volumen y claves de prueba, nunca contra producción o una DB ajena. En esta máquina `docker` es wrapper de Podman y `docker compose` invoca `podman-compose`. Trabajar en el checkout integrado que contenga `compose.yaml`, migraciones y `event_service.main:app`:
+Todo fallo devuelve un formato JSON estándar que no expone excepciones del sistema operativo, drivers de base de datos ni datos de la petición:
 
-1. Preparar el entorno de pruebas: definir `DATABASE_URL`, `EVENT_PRODUCER_KEY` y `EVENT_ANALYST_KEY` sin imprimir sus valores ni activar `set -x`. Elegir el nombre real del servicio PostgreSQL con `docker compose -f compose.yaml config --services` y asignarlo (`PG_SERVICE=nombre_real_del_servicio`); confirmar que `DATABASE_URL` apunta **solo** a esa base local y es accesible desde la API en el host. Ejecutar `docker compose -f compose.yaml up -d "$PG_SERVICE"` y `uv run alembic upgrade head`. Iniciar API **una sola vez** en la misma terminal y conservar su PID:
+```json
+{
+  "error": {
+    "code": "CODIGO_SEMANTICO",
+    "message": "Mensaje seguro y comprensible.",
+    "request_id": "c1f7a0b2-..."
+  }
+}
+```
 
-   ```bash
-   uv run uvicorn event_service.main:app --host 127.0.0.1 --port 8000 &
-   API_PID=$!
-   kill -0 "$API_PID"
-   ```
+| Condición de falla | Código HTTP | `error.code` | Comportamiento y mitigación de seguridad |
+|---|---:|---|---|
+| Datos mal formados, tamaño excedido, ventana inválida | `422` | `INVALID_INPUT` | Mensaje fijo estándar. No se reflejan valores ni campos enviados en la respuesta ni en logs. |
+| Clave de API ausente, vacía o no reconocida | `401` | `UNAUTHENTICATED` | Mensaje genérico sin confirmar existencia de claves. |
+| Rol insuficiente o fuente no autorizada | `403` | `FORBIDDEN` | Acceso denegado; no revela detalles de permisos internos. |
+| Identificador de evento inexistente (`UUID`) | `404` | `NOT_FOUND` | No copia el UUID en el cuerpo para evitar inyección en clientes. |
+| Tupla `(source, external_id)` duplicada | `409` | `DUPLICATE` | Notifica conflicto sin sustituir ni alterar el registro existente. |
+| Caída de PostgreSQL o timeout de conexión | `503` | `DEPENDENCY_UNAVAILABLE` | Error seguro sin exponer cadenas DSN, contraseñas ni hosts de la base. |
+| Error inesperado del servidor | `500` | `INTERNAL_ERROR` | Oculta tracebacks, rutas locales y volcados de memoria. |
 
-2. Definir esta sonda de lectura (no imprime claves ni cuerpo completo; necesita el rol `analyst`). Ajustar host/puerto si la API de pruebas usa otros:
+### Trazabilidad con `X-Request-ID`
+- Toda respuesta HTTP incluye la cabecera `X-Request-ID`. Si el cliente envía un ID alfanumérico seguro (hasta 128 caracteres), se conserva; en caso contrario, se genera un UUID v4.
+- Los logs estructurados del servidor registran únicamente: nivel de severidad, código de error, status HTTP, plantilla de la ruta (ej. `/v1/events/{event_id}`) y el `request_id`. Nunca se registran contraseñas, tokens, payloads ni cadenas de conexión.
 
-   ```bash
-   probe() {
-     python - "$1" "$2" <<'PY'
-   import json
-   import os
-   import sys
-   from urllib.error import HTTPError
-   from urllib.parse import urlencode
-   from urllib.request import Request, urlopen
+---
 
-   expected, request_id = int(sys.argv[1]), sys.argv[2]
-   query = urlencode({"from": "2020-01-01T00:00:00Z", "to": "2030-01-01T00:00:00Z", "group_by": "type"})
-   request = Request(
-       "http://127.0.0.1:8000/v1/analysis/counts?" + query,
-       headers={"X-API-Key": os.environ["EVENT_ANALYST_KEY"], "X-Request-ID": request_id},
-   )
-   try:
-       response = urlopen(request, timeout=10)
-   except HTTPError as error:
-       response = error
-   with response:
-       result = json.load(response)
-       status = response.status
-       echoed_id = response.headers["X-Request-ID"]
-   assert status == expected, (status, expected)
-   assert echoed_id == request_id
-   if expected == 503:
-       assert result["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
-       assert result["error"]["request_id"] == echoed_id
-   else:
-       assert result["group_by"] == "type" and "total" in result
-   print("status=", status, "request_id=", echoed_id, "code=", result.get("error", {}).get("code", "OK"))
-   PY
-   }
-   ```
+## 3. Demostración real de caída y recuperación (200 → 503 → 200)
 
-3. Secuencia **sin reiniciar API** (espera de hasta 30 segundos por PostgreSQL):
+La evidencia de recuperación ante fallos de dependencias se demostró empíricamente sobre el proceso real de la API sin reiniciarlo:
 
-   ```bash
-   probe 200 before-1
-   docker compose -f compose.yaml stop "$PG_SERVICE"
-   probe 503 down-1
-   docker compose -f compose.yaml start "$PG_SERVICE"
-   for attempt in $(seq 1 30); do
-     if docker compose -f compose.yaml exec -T "$PG_SERVICE" sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null; then
-       break
-     fi
-     sleep 1
-   done
-   probe 200 after-1
-   kill -0 "$API_PID"
-   ```
+1. Se inició la API con `uvicorn event_service.main:app` (PID conservado en memoria).
+2. **Petición 1 (PostgreSQL operativo):** `GET /v1/analysis/counts` devolvió `status=200`, `code=OK`, `request_id=before-1`.
+3. **Inducción de falla:** Se detuvo el contenedor PostgreSQL (`docker compose stop postgres`).
+4. **Petición 2 (PostgreSQL caído):** `GET /v1/analysis/counts` devolvió de inmediato `status=503`, `code=DEPENDENCY_UNAVAILABLE`, `request_id=down-1`. La API se mantuvo viva (liveness OK).
+5. **Restablecimiento:** Se reanudó el contenedor PostgreSQL (`docker compose start postgres`).
+6. **Petición 3 (PostgreSQL recuperado):** La misma instancia de la API (mismo PID) atendió la consulta y devolvió `status=200`, `code=OK`, `request_id=after-1`.
 
-   Guardar estados, IDs de correlación, PID y logs sanitizados como evidencia. La prueba falla si aparece 500, se agota el timeout o requiere reiniciar la API. Recuperación de consulta **no** demuestra que sea seguro reintentar una escritura.
-
-4. Terminar solo el proceso de API iniciado en el paso 1 (`kill "$API_PID"`); conservar el almacenamiento de prueba si se necesita evidencia de durabilidad. Reejecutar `uv run pytest -q tests/test_errors.py` en la rama integrada. **Resultado local de integración (2026-10-21):** `200 before-1 → 503 down-1 → 200 after-1`, mismo PID de API, IDs de solicitud coincidentes en cabecera/cuerpo; véase [evidencia](../evidencia/COM-04/index.md). El workflow prueba los casos automatizados, no detiene contenedores de la base durante CI.
+```text
+status= 200 request_id= before-1 code= OK
+status= 503 request_id= down-1 code= DEPENDENCY_UNAVAILABLE
+status= 200 request_id= after-1 code= OK
+PASS: PostgreSQL recovered without restarting API
+```

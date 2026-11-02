@@ -192,7 +192,7 @@ def test_data_survives_new_engine_and_repeated_upgrade(migrated_database, test_s
                 connection.exec_driver_sql(
                     "SELECT version_num FROM alembic_version"
                 ).scalar_one()
-                == "20261021_01"
+                == "20261102_02"
             )
             inspector = inspect(connection)
             columns = {
@@ -208,6 +208,11 @@ def test_data_survives_new_engine_and_repeated_upgrade(migrated_database, test_s
             assert any(
                 index["name"] == "ix_events_occurred_at_type"
                 and index["column_names"] == ["occurred_at", "type"]
+                for index in inspector.get_indexes("events")
+            )
+            assert any(
+                index["name"] == "ix_events_occurred_at_source"
+                and index["column_names"] == ["occurred_at", "source"]
                 for index in inspector.get_indexes("events")
             )
     finally:
@@ -238,3 +243,168 @@ def test_naive_time_is_not_silently_treated_as_utc():
     with pytest.raises(ValueError, match="timezone"):
         _create(session, "test", "test", occurred_at=datetime(2026, 10, 21))
     session.execute.assert_not_called()
+
+
+def test_create_batch_atomicity_and_duplicate_handling(
+    migrated_database, test_source
+):
+    engine = create_engine(migrated_database)
+    try:
+        with Session(engine) as session:
+            repo = EventRepository(session)
+            batch = [
+                {
+                    "source": test_source,
+                    "external_id": f"ext-{i}",
+                    "event_type": "temperature",
+                    "occurred_at": datetime(2026, 10, 21, 12, i, tzinfo=UTC),
+                    "payload": {"value": 20.0 + i},
+                }
+                for i in range(3)
+            ]
+            saved = repo.create_batch(batch)
+            assert len(saved) == 3
+
+        # A batch containing a duplicate fails atomically (none added)
+        with Session(engine) as session:
+            repo = EventRepository(session)
+            duplicate_batch = [
+                {
+                    "source": test_source,
+                    "external_id": "ext-99",
+                    "event_type": "temperature",
+                    "occurred_at": datetime(2026, 10, 21, 12, 50, tzinfo=UTC),
+                    "payload": {"value": 99.0},
+                },
+                {
+                    "source": test_source,
+                    "external_id": "ext-0",  # collision with existing ext-0
+                    "event_type": "temperature",
+                    "occurred_at": datetime(2026, 10, 21, 12, 51, tzinfo=UTC),
+                    "payload": {"value": 0.0},
+                },
+            ]
+            with pytest.raises(DuplicateEvent):
+                repo.create_batch(duplicate_batch)
+
+        # Confirm ext-99 was rolled back and not persisted
+        with Session(engine) as session:
+            ext_99 = session.scalar(
+                select(events.c.id).where(
+                    events.c.source == test_source,
+                    events.c.external_id == "ext-99",
+                )
+            )
+            assert ext_99 is None
+    finally:
+        engine.dispose()
+
+
+def test_list_events_pagination_and_filters(migrated_database, test_source):
+    engine = create_engine(migrated_database)
+    try:
+        start = datetime(2026, 10, 21, 10, tzinfo=UTC)
+        end = datetime(2026, 10, 21, 14, tzinfo=UTC)
+        with Session(engine) as session:
+            repo = EventRepository(session)
+            items = [
+                {
+                    "source": test_source,
+                    "external_id": f"p-{i}",
+                    "event_type": "pressure" if i % 2 == 0 else "temp",
+                    "occurred_at": datetime(2026, 10, 21, 11, i, tzinfo=UTC),
+                    "payload": {"reading": i},
+                }
+                for i in range(5)
+            ]
+            repo.create_batch(items)
+
+        with Session(engine) as session:
+            repo = EventRepository(session)
+            total, page1 = repo.list_events(
+                start=start,
+                end=end,
+                source=test_source,
+                limit=2,
+                offset=0,
+            )
+            assert total == 5
+            assert len(page1) == 2
+            assert page1[0].external_id == "p-0"
+            assert page1[1].external_id == "p-1"
+
+            # Filter by event_type
+            _, filtered = repo.list_events(
+                start=start,
+                end=end,
+                source=test_source,
+                event_type="pressure",
+                limit=10,
+                offset=0,
+            )
+            assert len(filtered) == 3
+            assert all(ev.type == "pressure" for ev in filtered)
+    finally:
+        engine.dispose()
+
+
+def test_timeseries_and_summary_analytics(migrated_database, test_source):
+    engine = create_engine(migrated_database)
+    try:
+        start = datetime(2026, 10, 21, 0, tzinfo=UTC)
+        end = datetime(2026, 10, 22, 0, tzinfo=UTC)
+        with Session(engine) as session:
+            repo = EventRepository(session)
+            items = [
+                {
+                    "source": test_source,
+                    "external_id": "ts-1",
+                    "event_type": "metric",
+                    "occurred_at": datetime(2026, 10, 21, 10, 15, tzinfo=UTC),
+                    "payload": {"val": 10.5},
+                },
+                {
+                    "source": test_source,
+                    "external_id": "ts-2",
+                    "event_type": "metric",
+                    "occurred_at": datetime(2026, 10, 21, 10, 45, tzinfo=UTC),
+                    "payload": {"val": 20.5},
+                },
+                {
+                    "source": test_source,
+                    "external_id": "ts-3",
+                    "event_type": "metric",
+                    "occurred_at": datetime(2026, 10, 21, 11, 5, tzinfo=UTC),
+                    "payload": {"val": 30.0},
+                },
+            ]
+            repo.create_batch(items)
+
+        with Session(engine) as session:
+            repo = EventRepository(session)
+            ts = repo.timeseries(
+                start=start,
+                end=end,
+                bucket="hour",
+                source=test_source,
+            )
+            assert len(ts) == 2
+            assert ts[0] == (datetime(2026, 10, 21, 10, tzinfo=UTC), 2)
+            assert ts[1] == (datetime(2026, 10, 21, 11, tzinfo=UTC), 1)
+
+            summary = repo.summary(
+                start=start,
+                end=end,
+                source=test_source,
+                numeric_field="val",
+            )
+            assert summary["total_events"] == 3
+            assert summary["unique_sources"] == 1
+            assert summary["unique_types"] == 1
+            assert summary["numeric_summary"]["samples"] == 3
+            assert summary["numeric_summary"]["min"] == 10.5
+            assert summary["numeric_summary"]["max"] == 30.0
+            assert summary["numeric_summary"]["avg"] == (10.5 + 20.5 + 30.0) / 3
+    finally:
+        engine.dispose()
+

@@ -1,17 +1,23 @@
-# ADR-0003 — HTTP y SQL síncronos, sin cola por defecto
+# ADR-0003 — Protocolo HTTP REST y consultas SQL sincrónicas
 
-- **Fecha:** 2026-10-21
-- **Estado:** aceptada e implementada en el MVP local; reevaluar si cambian los requisitos de carga o entrega.
+- **Fecha:** 2026-10-21 (Actualizado: 2026-11-02 para Escenario 3)
+- **Estado:** Aceptada e implementada en el código base del Escenario 3.
 
 ## Contexto y decisión
 
-Para el MVP provisional el cliente necesita saber si el evento fue persistido, duplicado o inválido y consultar resultados actuales. Elegimos HTTP/JSON síncrono entre cliente y app, y SQL síncrono entre app y PostgreSQL. `POST /v1/events`, `GET /v1/events/{id}`, `GET /v1/analysis/counts` y las sondas existen y se probaron con PostgreSQL local ([contexto](../arquitectura/contexto.md)). No hay contrato de eventos asíncronos, entrega, orden ni consumidor externo.
+Los clientes y sensores del **Escenario 3** requieren confirmación inmediata sobre si un evento (o lote de eventos) fue aceptado, duplicado o rechazado por formato, y los consumidores analíticos necesitan consultar datos actualizados en tiempo real.
+
+Elegimos **HTTP/REST sincrónico con formato JSON** para la interfaz cliente-servicio y **SQL sincrónico sobre pool de conexiones** para la interacción servicio-PostgreSQL:
+- `POST /v1/events` y `POST /v1/events/batch` confirman la transacción antes de responder `201 Created`.
+- Consultas `GET /v1/events`, `GET /v1/analysis/*` leen directamente de la base de datos y devuelven el estado más reciente.
+- No se incorpora un broker de mensajes intermedio por defecto.
 
 ## Alternativas y consecuencias
 
-| Alternativa | Razón para no elegirla ahora |
+| Alternativa | Razón para no elegirla |
 |---|---|
-| Cola/worker de ingesta | Exige definir acuse, entrega, deduplicación, reintentos y operación adicional; no hay requisito de procesamiento diferido. |
-| HTTP entre microservicios de ingesta y análisis | Frontera de red y fallos parciales para capacidades que comparten el mismo dato sin necesidad comprobada. |
+| Cola de mensajes asíncrona (RabbitMQ, Kafka, Azure Service Bus) | Complica la confirmación atómica al cliente (devolvería 202 Accepted en lugar de confirmar persistencia real) y añade infraestructura costosa. |
+| gRPC / Protocol Buffers | Mayor complejidad de inspección y herramientas cliente; HTTP/JSON cumple holgadamente los requisitos de latencia y facilidad de prueba con curl/pytest. |
 
-Ventaja: errores inmediatos y semántica simple para `[source, external_id]`. Costes: cliente espera a DB y una caída produce `503`; en escrituras no se reintenta automáticamente para evitar duplicación. Si el escenario exige procesamiento desacoplado o latencia/carga verificadas lo recomiendan, redactar un nuevo ADR con semántica de entrega e idempotencia antes de introducir cola. Ver también [diagrama de contenedores](../arquitectura/contenedores.md).
+**Ventajas:** Simplicidad conceptual, trazabilidad directa con `X-Request-ID`, respuestas inmediatas de duplicados (409) o errores de entrada (422) y facilidad de prueba.
+**Costos:** La latencia de ingesta depende directamente del tiempo de confirmación en base de datos; mitigado mediante soporte de inserción atómica en lote (`POST /v1/events/batch`).

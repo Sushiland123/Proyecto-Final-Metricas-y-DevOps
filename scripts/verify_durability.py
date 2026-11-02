@@ -224,6 +224,13 @@ def main() -> None:
             != datetime.fromisoformat(event["occurred_at"])
         ):
             raise RuntimeError("Event contents changed after restarting both processes")
+        summary = request(
+            "GET",
+            f"{api_url}/v1/analysis/summary?from=2026-10-21T00:00:00Z&to=2026-10-22T00:00:00Z&source=com03-defense",
+            key=os.environ["EVENT_ANALYST_KEY"],
+        )
+        if summary.get("total_events") != 1:
+            raise RuntimeError("Summary query failed to reflect persisted event")
         print(f"PASS: event {event_id} persisted after API + PostgreSQL restart")
     finally:
         stop_api()
