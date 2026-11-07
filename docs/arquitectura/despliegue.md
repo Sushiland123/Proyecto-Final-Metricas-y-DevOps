@@ -10,7 +10,7 @@ flowchart LR
     end
 ```
 
-Seguir el [README](../../README.md#arranque-local). Para binario nativo: `cargo run --locked -- migrate`, luego `cargo run --locked -- serve`. Para contenedor: perfil `app` de Compose; migraciones como proceso independiente antes de iniciar el servicio. El runtime escucha `0.0.0.0:8000`, usuario 10001 sin root, certificados CA instalados, sin toolchain ni código fuente.
+Seguir el [README](../../README.md#arranque-local). Para binario nativo: `cargo run --locked -- migrate`, luego `cargo run --locked -- serve`. Para contenedor: perfil `app` de Compose; ejecutar `docker compose --profile app run --rm api migrate` y después `docker compose --profile app up -d api`. El runtime escucha `0.0.0.0:8000`, usuario 10001 sin root, certificados CA instalados, sin toolchain ni código fuente.
 
 `DATABASE_URL` del host usa el puerto publicado; dentro de Compose usa `postgres:5432`. La API escucha solo en loopback por defecto fuera de contenedores. No publicar PostgreSQL a Internet. Terminar TLS y aplicar rate limiting en el proxy/ingress.
 

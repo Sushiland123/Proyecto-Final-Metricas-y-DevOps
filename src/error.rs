@@ -31,6 +31,7 @@ pub struct PublicError {
 }
 
 impl Error {
+    /// Map semantic failures to fixed HTTP metadata, never to driver or request messages.
     pub fn details(self) -> (StatusCode, &'static str, &'static str) {
         match self {
             Self::InvalidInput => (
@@ -63,6 +64,7 @@ impl Error {
             ),
         }
     }
+    /// Build the safe JSON envelope using an already validated correlation identifier.
     pub fn response(self, request_id: String) -> Response {
         let (status, code, message) = self.details();
         (
@@ -79,6 +81,7 @@ impl Error {
     }
 }
 impl IntoResponse for Error {
+    /// Preserve the semantic error for the outer correlation layer to finalize its request ID.
     fn into_response(self) -> Response {
         let mut response = self.response(String::new());
         response.extensions_mut().insert(self);

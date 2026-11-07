@@ -21,6 +21,7 @@ struct ProbeRepository {
     available: AtomicBool,
 }
 impl ProbeRepository {
+    /// Count unexpected storage access so denied use cases cannot silently touch persistence.
     fn accessed<T>(&self) -> Result<T, Error> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Err(Error::Unavailable)
@@ -28,6 +29,7 @@ impl ProbeRepository {
 }
 #[async_trait]
 impl EventRepository for ProbeRepository {
+    /// Model a recoverable dependency without rebuilding the HTTP application.
     async fn ready(&self) -> Result<(), Error> {
         if self.available.load(Ordering::SeqCst) {
             Ok(())
@@ -44,6 +46,7 @@ impl EventRepository for ProbeRepository {
     async fn list(&self, _: &ListQuery) -> Result<(i64, Vec<Event>), Error> {
         self.accessed()
     }
+    /// Return deliberately unsorted dimensions to verify locale-independent application ordering.
     async fn counts(&self, _: &CountsQuery) -> Result<Vec<Count>, Error> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(vec![
@@ -66,6 +69,7 @@ impl EventRepository for ProbeRepository {
 }
 
 #[tokio::test]
+/// Call use cases directly to prove HTTP adapters are not the sole authorization boundary.
 async fn service_rechecks_permissions_before_repository_access() {
     let repository = Arc::new(ProbeRepository::default());
     let service = EventService::new(repository.clone());
@@ -128,6 +132,7 @@ async fn service_rechecks_permissions_before_repository_access() {
 }
 
 #[tokio::test]
+/// Preserve liveness during dependency failure and recover readiness on the same router instance.
 async fn dependency_recovers_without_rebuilding_app() {
     let repository = Arc::new(ProbeRepository::default());
     let app = api::router(AppState {

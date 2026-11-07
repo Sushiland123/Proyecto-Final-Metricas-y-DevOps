@@ -46,7 +46,7 @@ Antes de fijar un SLO, medir al menos latencia p50/p95/p99, throughput, proporci
 
 ## Recuperación ante fallos
 
-- **Interrupción transitoria de DB:** mantener liveness; readiness retira la instancia del tráfico. Las lecturas transitorias tienen reintentos limitados. Al recuperar DB, el pool descarta conexiones inválidas y abre conexiones nuevas.
+- **Interrupción transitoria de DB:** mantener liveness; `/health/ready` informa 503 pero no modifica el enrutamiento por sí mismo. El proxy o la plataforma debe configurar una sonda y usar su resultado para retirar la instancia del tráfico; Compose no incluye esa integración. Las lecturas transitorias tienen reintentos limitados. Al recuperar DB, el pool descarta conexiones inválidas y abre conexiones nuevas.
 - **Resultado de escritura incierto:** una desconexión durante COMMIT puede ocurrir después de persistir. Verificar el evento por consulta; no asumir que un 503 implica ausencia de escritura. Un reenvío con la misma clave natural puede devolver 409.
 - **Fallo de migración:** detener la promoción, conservar diagnósticos y revisar esquema/checksums. No registrar manualmente una migración como aplicada para omitir una incompatibilidad.
 - **Rollback de aplicación:** solo desplegar el binario anterior si su contrato de datos es compatible con el esquema vigente. No ejecutar un downgrade destructivo como parte automática del rollback.

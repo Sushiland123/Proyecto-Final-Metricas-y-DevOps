@@ -15,10 +15,12 @@ pub struct Settings {
     pub retry_backoff: Duration,
 }
 impl Settings {
+    /// Snapshot process environment at startup; later changes require replacing the process.
     pub fn from_env() -> Self {
         Self::from_map(&std::env::vars().collect())
     }
-    /// Pure parsing allows isolated tests without mutating process globals.
+    /// Parse an isolated environment, applying bounded numeric defaults and fail-closed key grammar.
+    /// Missing storage configuration preserves liveness; invalid credentials never grant access.
     pub fn from_map(values: &BTreeMap<String, String>) -> Self {
         let present = |name: &str| values.get(name).filter(|s| !s.trim().is_empty()).cloned();
         let bounded = |name: &str, default, min, max| {

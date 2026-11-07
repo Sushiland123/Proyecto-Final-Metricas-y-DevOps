@@ -12,6 +12,8 @@ API keys en `X-API-Key`; nunca en query o body. La autenticación se resuelve en
 
 `EVENT_PRODUCER_SOURCE_KEYS=sensor-a:clave,sensor-b:otra` (también acepta `=`). Fuentes simples ASCII, sin duplicados; claves no vacías y sin colisión con claves globales. Una misma clave restringida puede habilitar varias fuentes. Lotes verifican todas las fuentes antes de escribir para impedir cambios parciales. Cabeceras API-key duplicadas se rechazan.
 
+La coma separa entradas y no puede formar parte de una clave. El parser da prioridad a `:`: con el formato alternativo `fuente=clave`, una clave que contenga `:` invalida la configuración completa. Usar claves aleatorias hexadecimales evita estas ambigüedades; el formato `fuente:clave` permite `:` dentro de la clave después del primer separador.
+
 Se comparan digests SHA-256 de longitud fija mediante `subtle::ConstantTimeEq`. Esta es una comparación de secretos de alta entropía, no un sistema de almacenamiento de contraseñas humanas. Generar claves aleatorias, transportarlas bajo TLS y guardarlas como secretos del despliegue. La comparación no convierte toda la petición HTTP en tiempo constante.
 
 `Settings` no implementa Debug/Serialize. Configuración leída al arrancar; rotación requiere reinicio. No existe login humano, JWT, revocación dinámica ni rate limiting interno: si el escenario crece, reevaluar OIDC/gestor de secretos y proxy.

@@ -10,6 +10,7 @@ use std::{process::ExitCode, sync::Arc};
 use utoipa::OpenApi;
 
 #[tokio::main]
+/// Initialize safe diagnostics and translate command failures to a nonzero process exit status.
 async fn main() -> ExitCode {
     // The default hook prints panic payloads even when catch_unwind handles them.
     // Never send potentially sensitive panic messages to application logs.
@@ -31,6 +32,7 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Dispatch explicit serve/migrate/openapi operations without implicitly migrating during startup.
 async fn run() -> Result<(), &'static str> {
     let command = std::env::args()
         .nth(1)
@@ -76,6 +78,7 @@ async fn run() -> Result<(), &'static str> {
         .map_err(|_| "HTTP server failed")
 }
 
+/// Await SIGINT or Unix SIGTERM so Axum can finish active requests before process exit.
 async fn shutdown() {
     #[cfg(unix)]
     {

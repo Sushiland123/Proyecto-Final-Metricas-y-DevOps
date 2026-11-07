@@ -8,6 +8,7 @@ use event_service::{
 use std::collections::BTreeMap;
 
 #[test]
+/// Verify vertical role separation, lateral source scoping and unknown-key rejection.
 fn roles_and_source_scope_cannot_escalate() {
     let settings = support::settings();
     let producer = authenticate(Some("test-producer"), &settings).unwrap();
@@ -26,6 +27,7 @@ fn roles_and_source_scope_cannot_escalate() {
 }
 
 #[test]
+/// Reject malformed source grammar and ambiguous global/scoped credentials for all identities.
 fn malformed_or_colliding_settings_fail_closed() {
     for raw in [
         "bad",
@@ -59,6 +61,7 @@ fn malformed_or_colliding_settings_fail_closed() {
 }
 
 #[test]
+/// Preserve the supported many-sources-per-key authorization model without global privileges.
 fn one_scoped_key_may_authorize_multiple_sources() {
     let mut settings = support::settings();
     settings
@@ -70,6 +73,7 @@ fn one_scoped_key_may_authorize_multiple_sources() {
 }
 
 #[test]
+/// Check numeric bounds, invalid-value defaults and an explicitly disabled retry delay.
 fn bounded_configuration_defaults_on_invalid_values() {
     let settings = Settings::from_map(&BTreeMap::from([
         ("DB_CONNECT_TIMEOUT_SECONDS".into(), "0".into()),

@@ -15,6 +15,7 @@ pub struct Principal {
     sources: Option<BTreeSet<String>>,
 }
 impl Principal {
+    /// Deny operations outside the authenticated role before any data access.
     pub fn require(&self, role: Role) -> Result<(), Error> {
         if self.role == role {
             Ok(())
@@ -22,6 +23,7 @@ impl Principal {
             Err(Error::Forbidden)
         }
     }
+    /// Require producer privileges and membership in the optional source allow-list.
     pub fn require_source(&self, source: &str) -> Result<(), Error> {
         self.require(Role::Producer)?;
         if self
@@ -35,9 +37,12 @@ impl Principal {
         }
     }
 }
+/// Compare fixed-size SHA-256 digests without secret-dependent comparison short-circuiting.
 fn equal(a: &str, b: &str) -> bool {
     bool::from(Sha256::digest(a.as_bytes()).ct_eq(&Sha256::digest(b.as_bytes())))
 }
+/// Resolve a global or source-scoped API key, rejecting incomplete or colliding configuration.
+/// All unsuccessful outcomes use the same public error without exposing credential values.
 pub fn authenticate(key: Option<&str>, settings: &Settings) -> Result<Principal, Error> {
     let reject = Error::Unauthenticated;
     let producer = settings

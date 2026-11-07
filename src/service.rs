@@ -12,12 +12,15 @@ pub struct EventService {
     repository: Arc<dyn EventRepository>,
 }
 impl EventService {
+    /// Inject a persistence port; application rules do not construct database connections.
     pub fn new(repository: Arc<dyn EventRepository>) -> Self {
         Self { repository }
     }
+    /// Probe the configured dependency without changing schema or persistent data.
     pub async fn ready(&self) -> Result<(), Error> {
         self.repository.ready().await
     }
+    /// Authorize every source, validate the batch and reject internal duplicates before one atomic write.
     pub async fn create(
         &self,
         principal: &Principal,
@@ -40,10 +43,12 @@ impl EventService {
             events,
         })
     }
+    /// Return an event to an analyst, mapping a missing UUID to the public not-found error.
     pub async fn get(&self, principal: &Principal, id: Uuid) -> Result<Event, Error> {
         principal.require(Role::Analyst)?;
         self.repository.get(id).await?.ok_or(Error::NotFound)
     }
+    /// Return an authorized bounded page with the effective interval and filters in its envelope.
     pub async fn list(
         &self,
         principal: &Principal,
@@ -57,9 +62,11 @@ impl EventService {
             limit: query.limit,
             offset: query.offset,
             window: query.window(),
+            filters: query.filters(),
             items,
         })
     }
+    /// Aggregate an authorized interval and enforce response ordering independently of DB collation.
     pub async fn counts(
         &self,
         principal: &Principal,
@@ -77,6 +84,7 @@ impl EventService {
             buckets,
         })
     }
+    /// Produce authorized UTC buckets at the validated resolution, omitting empty buckets.
     pub async fn timeseries(
         &self,
         principal: &Principal,
@@ -93,6 +101,7 @@ impl EventService {
             points,
         })
     }
+    /// Authorize and validate the request before delegating coherent statistical reads to storage.
     pub async fn summary(
         &self,
         principal: &Principal,

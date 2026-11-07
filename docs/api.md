@@ -33,7 +33,7 @@ Enviar `X-API-Key`. `producer` permite ingesta, `analyst` permite lecturas y an�
 | `POST /v1/events` | producer | 201, evento completo confirmado |
 | `POST /v1/events/batch` | producer | 201, `{"inserted":2,"events":[...]}` |
 | `GET /v1/events/{id}` | analyst | 200, evento; UUID inexistente: 404 |
-| `GET /v1/events` | analyst | 200, `total`, `limit`, `offset`, `window`, `items` |
+| `GET /v1/events` | analyst | 200, `total`, `limit`, `offset`, `window`, `filters`, `items` |
 | `GET /v1/analysis/counts` | analyst | 200, `total`, `group_by`, `window`, `buckets:[{key,count}]` |
 | `GET /v1/analysis/timeseries` | analyst | 200, `total`, `bucket`, `window`, `filters`, `points:[{bucket_start,count}]` |
 | `GET /v1/analysis/summary` | analyst | 200, resumen descrito abajo |
@@ -58,8 +58,8 @@ Todas las consultas de listado/análisis requieren `from` y `to`, RFC3339 con zo
 | Ruta | Parámetros adicionales |
 |---|---|
 | `/v1/events` | `source`, `type` opcionales; `limit` 1–100 (50), `offset` 0–100000 (0) |
-| `/v1/analysis/counts` | `group_by=type|source` obligatorio; no admite filtros adicionales |
-| `/v1/analysis/timeseries` | `source`, `type` opcionales; `bucket=minute|hour|day` (hour) |
+| `/v1/analysis/counts` | `group_by=type\|source` obligatorio; no admite filtros adicionales |
+| `/v1/analysis/timeseries` | `source`, `type` opcionales; `bucket=minute\|hour\|day` (hour) |
 | `/v1/analysis/summary` | `source`, `type` opcionales; `numeric_field` identificador simple (value) |
 
 Series: máximo 7 días con `minute`, 90 con `hour`, 366 con `day`. Solo devuelve buckets con datos, truncados en UTC; no rellena ceros. Conteos y resúmenes no limitan el rango temporal: el timeout SQL limita cada sentencia, no el coste total de exploración. Listados se ordenan por `occurred_at ASC, id ASC`; conteos por clave ascendente.
@@ -76,7 +76,9 @@ curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
   --data-urlencode 'numeric_field=value' http://127.0.0.1:8000/v1/analysis/summary
 ```
 
-Resumen: `total_events`, `unique_sources`, `unique_types`, `first_occurred_at`, `last_occurred_at`, `by_type`, `by_source`, `numeric_summary`, `window`, `filters`. `numeric_summary` contiene `field`, `samples`, `min`, `max`, `avg`: solo cuenta valores JSON numéricos, nunca booleanos ni cadenas numéricas. Sin muestras: `samples=0`, estadísticas null. Sin eventos: fechas null y agrupaciones vacías. Los valores estadísticos se devuelven como float64; no están destinados a cálculos monetarios de precisión arbitraria. Listado y resumen usan snapshots repetibles para coherencia entre sus consultas.
+Resumen: `total_events`, `unique_sources`, `unique_types`, `first_occurred_at`, `last_occurred_at`, `by_type`, `by_source`, `numeric_summary`, `window`, `filters`. `numeric_summary` contiene `field`, `samples`, `min`, `max`, `avg`: solo cuenta valores JSON numéricos cuya magnitud no supera `f64::MAX`, nunca booleanos ni cadenas numéricas. Valores mayores, como `1e400`, permanecen almacenados pero no participan en estadísticas. Sin muestras: `samples=0`, estadísticas null. Sin eventos: fechas null y agrupaciones vacías. Las estadísticas se agregan como numeric y se convierten a float64 en Rust, evitando errores SQL de desbordamiento; magnitudes extremadamente pequeñas pueden redondearse a cero. No están destinadas a cálculos monetarios de precisión arbitraria. Listado y resumen usan snapshots repetibles para coherencia entre sus consultas.
+
+`external_id`, las cadenas del payload y sus claves no admiten U+0000 (NUL), que PostgreSQL no puede representar: se rechaza con 422 antes de acceder al almacenamiento.
 
 ## Errores y correlación
 

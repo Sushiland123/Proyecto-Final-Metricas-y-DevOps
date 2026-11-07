@@ -3,11 +3,13 @@ mod support;
 use event_service::domain::*;
 use serde_json::{Value, json};
 
+/// Exercise deserialization and semantic validation as one boundary acceptance decision.
 fn validate(value: Value) -> bool {
     serde_json::from_value::<EventCreate>(value).is_ok_and(|event| event.validate().is_ok())
 }
 
 #[test]
+/// Verify timezone normalization and exact preservation of JSON integers larger than machine words.
 fn event_normalizes_utc_and_preserves_json() {
     let mut value = support::event("sensor-a", "id");
     value["occurred_at"] = json!("2026-10-21T12:00:00+02:00");
@@ -25,6 +27,7 @@ fn event_normalizes_utc_and_preserves_json() {
 }
 
 #[test]
+/// Reject malformed, unknown and PostgreSQL-incompatible input before it can reach storage.
 fn rejects_invalid_identifiers_dates_payloads_and_extra_fields() {
     for field in ["source", "type"] {
         for invalid in ["", "bad source", "../x", "é", "a\n", &"x".repeat(65)] {
@@ -36,6 +39,10 @@ fn rejects_invalid_identifiers_dates_payloads_and_extra_fields() {
     for (field, invalid) in [
         ("external_id", json!("")),
         ("external_id", json!("e".repeat(129))),
+        ("external_id", json!("a\u{0000}b")),
+        ("payload", json!({"value":"a\u{0000}b"})),
+        ("payload", json!({"a\u{0000}b":23.5})),
+        ("payload", json!({"nested":[{"key":"\u{0000}"}]})),
         ("occurred_at", json!("2026-10-21T12:00:00")),
         ("occurred_at", json!(1792584000)),
         ("payload", json!([])),
@@ -48,6 +55,7 @@ fn rejects_invalid_identifiers_dates_payloads_and_extra_fields() {
 }
 
 #[test]
+/// Check the exact payload byte boundary and multibyte Unicode accounting.
 fn payload_limit_counts_utf8_bytes() {
     let mut value = support::event("sensor-a", "id");
     value["payload"] = json!({"data": "x".repeat(16 * 1024 - 11)});
@@ -59,6 +67,7 @@ fn payload_limit_counts_utf8_bytes() {
 }
 
 #[test]
+/// Accept only 1–100 events and reject additional batch envelope fields.
 fn batch_bounds_and_unknown_fields() {
     for count in [0, 1, 100, 101] {
         let batch: EventBatchCreate = serde_json::from_value(
@@ -71,6 +80,7 @@ fn batch_bounds_and_unknown_fields() {
 }
 
 #[test]
+/// Test invalid ordering, pagination, booleans and exact resolution-dependent window boundaries.
 fn validates_queries_and_window_limits() {
     let window = json!({"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"});
     let mut counts = window.clone();

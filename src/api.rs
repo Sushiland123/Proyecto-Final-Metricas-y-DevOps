@@ -30,6 +30,7 @@ pub struct AppState {
 
 impl FromRequestParts<AppState> for Principal {
     type Rejection = Error;
+    /// Authenticate exactly one API-key header before body extraction or repository access.
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Error> {
         let mut keys = parts.headers.get_all("x-api-key").iter();
         let key = keys.next().and_then(|key| key.to_str().ok());
@@ -65,6 +66,7 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Accept only bounded printable identifier characters safe for headers and structured logs.
 fn valid_request_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -74,6 +76,8 @@ fn valid_request_id(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// Assign a validated request ID, sanitize failures and log only the matched route template.
+/// Preserve method-routing Allow metadata while preventing raw extractor or panic responses.
 async fn correlate(request: Request, next: Next) -> Response {
     let mut values = request.headers().get_all("x-request-id").iter();
     let supplied = values
@@ -133,16 +137,19 @@ struct Health {
 }
 
 #[utoipa::path(get, path = "/health/live", responses((status = 200, body = Health)))]
+/// Report process liveness without requiring storage or valid protected-route credentials.
 async fn live() -> Json<Health> {
     Json(Health { status: "alive" })
 }
 #[utoipa::path(get, path = "/health/ready", responses((status = 200, body = Health), (status = 503, body = ErrorEnvelope)))]
+/// Report basic database connectivity; traffic removal requires an external readiness integration.
 async fn ready(State(state): State<AppState>) -> Result<Json<Health>, Error> {
     state.service.ready().await?;
     Ok(Json(Health { status: "ready" }))
 }
 
 #[utoipa::path(post, path = "/v1/events", request_body = EventCreate, security(("api_key" = [])), responses((status = 201, body = Event), (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)))]
+/// Validate and persist one producer event; return its confirmed representation after COMMIT.
 async fn create_event(
     State(state): State<AppState>,
     principal: Principal,
@@ -162,6 +169,7 @@ async fn create_event(
     Ok((StatusCode::CREATED, Json(event)))
 }
 #[utoipa::path(post, path = "/v1/events/batch", request_body = EventBatchCreate, security(("api_key" = [])), responses((status = 201, body = BatchResponse), (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)))]
+/// Persist a producer batch atomically, rejecting any duplicate or unauthorized source.
 async fn create_batch(
     State(state): State<AppState>,
     principal: Principal,
@@ -174,6 +182,7 @@ async fn create_batch(
     ))
 }
 #[utoipa::path(get, path = "/v1/events/{id}", params(("id" = Uuid, Path)), security(("api_key" = [])), responses((status = 200, body = Event), (status = 404, body = ErrorEnvelope)))]
+/// Return one event to an analyst; malformed UUIDs and missing resources remain distinct failures.
 async fn get_event(
     State(state): State<AppState>,
     principal: Principal,
@@ -183,6 +192,7 @@ async fn get_event(
     Ok(Json(state.service.get(&principal, id).await?))
 }
 #[utoipa::path(get, path = "/v1/events", params(ListQuery), security(("api_key" = [])), responses((status = 200, body = ListResponse), (status = 422, body = ErrorEnvelope)))]
+/// Return an analyst page including total, effective interval and applied source/type filters.
 async fn list_events(
     State(state): State<AppState>,
     principal: Principal,
@@ -192,6 +202,7 @@ async fn list_events(
     Ok(Json(state.service.list(&principal, query).await?))
 }
 #[utoipa::path(get, path = "/v1/analysis/counts", params(CountsQuery), security(("api_key" = [])), responses((status = 200, body = CountsResponse), (status = 422, body = ErrorEnvelope)))]
+/// Return analyst counts grouped by an allow-listed dimension over a half-open UTC interval.
 async fn counts(
     State(state): State<AppState>,
     principal: Principal,
@@ -201,6 +212,7 @@ async fn counts(
     Ok(Json(state.service.counts(&principal, query).await?))
 }
 #[utoipa::path(get, path = "/v1/analysis/timeseries", params(TimeseriesQuery), security(("api_key" = [])), responses((status = 200, body = TimeseriesResponse), (status = 422, body = ErrorEnvelope)))]
+/// Return nonempty analyst time buckets at the validated minute, hour or day resolution.
 async fn timeseries(
     State(state): State<AppState>,
     principal: Principal,
@@ -210,6 +222,7 @@ async fn timeseries(
     Ok(Json(state.service.timeseries(&principal, query).await?))
 }
 #[utoipa::path(get, path = "/v1/analysis/summary", params(SummaryQuery), security(("api_key" = [])), responses((status = 200, body = SummaryResponse), (status = 422, body = ErrorEnvelope)))]
+/// Return coherent analyst totals and numeric statistics without exposing underlying SQL errors.
 async fn summary(
     State(state): State<AppState>,
     principal: Principal,
@@ -221,6 +234,7 @@ async fn summary(
 
 struct Security;
 impl Modify for Security {
+    /// Declare API-key authentication and the shared public failure contract for protected paths.
     fn modify(&self, api: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = api.components.as_mut() {
             components.add_security_scheme(

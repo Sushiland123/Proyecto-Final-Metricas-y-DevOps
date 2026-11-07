@@ -16,6 +16,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 struct ApiProcess(Child);
 impl Drop for ApiProcess {
+    /// Reap only the API child owned by this experiment, including error paths.
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
@@ -26,6 +27,7 @@ struct TestContainer {
     name: String,
 }
 impl TestContainer {
+    /// Execute a checked engine operation against the uniquely named test container.
     fn command(&self, args: &[&str]) -> Result<()> {
         if !Command::new(&self.engine).args(args).status()?.success() {
             return Err("container operation failed".into());
@@ -34,6 +36,7 @@ impl TestContainer {
     }
 }
 impl Drop for TestContainer {
+    /// Stop the experiment-owned container while retaining its volume for inspection.
     fn drop(&mut self) {
         let _ = Command::new(&self.engine)
             .args(["stop", &self.name])
@@ -41,6 +44,7 @@ impl Drop for TestContainer {
     }
 }
 
+/// Require configuration without copying its secret value into error messages.
 fn required(name: &str) -> Result<String> {
     env::var(name)
         .ok()
@@ -48,6 +52,7 @@ fn required(name: &str) -> Result<String> {
         .ok_or_else(|| format!("{name} is required").into())
 }
 
+/// Spawn the real binary on an isolated listener and capture both log streams as local evidence.
 fn start_api(binary: &PathBuf, address: &str) -> Result<ApiProcess> {
     std::fs::create_dir_all("artifacts")?;
     let log = File::options()
@@ -64,6 +69,7 @@ fn start_api(binary: &PathBuf, address: &str) -> Result<ApiProcess> {
     ))
 }
 
+/// Bound readiness waits and fail promptly if the owned API process terminates.
 async fn wait_ready(client: &Client, base: &str, process: &mut ApiProcess) -> Result<()> {
     for _ in 0..90 {
         if process.0.try_wait()?.is_some() {
@@ -82,6 +88,7 @@ async fn wait_ready(client: &Client, base: &str, process: &mut ApiProcess) -> Re
     Err("readiness timeout".into())
 }
 
+/// Wait for the dedicated test DB and apply embedded migrations without disclosing its DSN.
 async fn migrate(repository: &event_service::postgres::PostgresRepository) -> Result<()> {
     for _ in 0..60 {
         if event_service::MIGRATOR
@@ -101,6 +108,8 @@ async fn migrate(repository: &event_service::postgres::PostgresRepository) -> Re
 }
 
 #[tokio::main]
+/// Verify same-process recovery, full restart durability and redaction using dedicated real processes.
+/// Refuse nonlocal/non-test DB configuration and never delete existing application storage.
 async fn main() -> Result<()> {
     let url = Url::parse(&required("DATABASE_URL")?).map_err(|_| "invalid DATABASE_URL")?;
     let db = required("POSTGRES_DB")?;

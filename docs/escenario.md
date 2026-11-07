@@ -13,7 +13,7 @@ Especificación COM-01…06 de la implementación íntegramente Rust. Contrato d
 | E3-05 | Listado cronológico con filtros, limit 1–100, offset 0–100000 | `tests/postgres.rs::ingestion_get_duplicate_and_pagination`, `tests/domain.rs::validates_queries_and_window_limits` |
 | E3-06 | Conteos por tipo/fuente, claves ordenadas, vacío = 0 | `tests/postgres.rs::counts_use_half_open_utc_windows_and_sorted_buckets` |
 | E3-07 | Buckets UTC minute/hour/day; máximo 7/90/366 días | `tests/postgres.rs::timeseries_summary_and_empty_results`, `tests/domain.rs::validates_queries_and_window_limits` |
-| E3-08 | Resumen numérico ignora strings, booleanos y null; sin muestras estadísticas null | `tests/postgres.rs::timeseries_summary_and_empty_results` |
+| E3-08 | Resumen numérico ignora strings, booleanos, null y magnitudes fuera de float64; sin muestras estadísticas null | `tests/postgres.rs::timeseries_summary_and_empty_results`, `summary_handles_extreme_numeric_payloads_without_losing_events` |
 | E3-09 | RFC3339 con zona normalizado UTC; ventana semiabierta `[from,to)` | `tests/postgres.rs::counts_use_half_open_utc_windows_and_sorted_buckets`, `tests/domain.rs::event_normalizes_utc_and_preserves_json` |
 | E3-10 | RBAC producer/analyst; autorización en casos de uso antes de persistencia | `tests/service.rs::service_rechecks_permissions_before_repository_access`, `tests/auth.rs::roles_and_source_scope_cannot_escalate` |
 | E3-11 | Claves restringidas por fuente y fallo cerrado por configuración ambigua | `tests/auth.rs::malformed_or_colliding_settings_fail_closed`, `one_scoped_key_may_authorize_multiple_sources` |

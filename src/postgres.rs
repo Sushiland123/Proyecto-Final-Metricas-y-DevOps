@@ -42,10 +42,13 @@ impl PostgresRepository {
         }
     }
 
+    /// Expose the shared pool for controlled migrations and probes, rejecting absent/invalid DSNs.
     pub fn pool(&self) -> Result<&PgPool, Error> {
         self.pool.as_ref().ok_or(Error::Unavailable)
     }
 
+    /// Retry only transient, idempotent reads within the configured attempt/backoff budget.
+    /// Retrying the closure recreates transactions rather than reusing an aborted snapshot.
     async fn read<T, F, Fut>(&self, operation: F) -> Result<T, Error>
     where
         F: Fn() -> Fut,
@@ -64,6 +67,7 @@ impl PostgresRepository {
     }
 }
 
+/// Classify connectivity, restart and transaction-conflict failures without exposing driver details.
 fn retryable(error: &sqlx::Error) -> bool {
     match error {
         sqlx::Error::Io(_)
@@ -81,6 +85,7 @@ fn retryable(error: &sqlx::Error) -> bool {
     }
 }
 
+/// Recognize only the natural-key uniqueness constraint as a duplicate; hide other DB failures.
 fn write_error(error: sqlx::Error) -> Error {
     if let sqlx::Error::Database(db) = &error
         && db.code().as_deref() == Some("23505")
@@ -91,6 +96,7 @@ fn write_error(error: sqlx::Error) -> Error {
     Error::Unavailable
 }
 
+/// Append bound half-open interval and optional equality predicates to an adapter-owned SQL prefix.
 fn filtered<'a>(sql: &str, window: &Window, filters: &'a Filters) -> QueryBuilder<'a, Postgres> {
     let mut query = QueryBuilder::new(sql.to_owned());
     query
@@ -107,6 +113,7 @@ fn filtered<'a>(sql: &str, window: &Window, filters: &'a Filters) -> QueryBuilde
     query
 }
 
+/// Start a read-only repeatable snapshot so totals and rows cannot observe different commits.
 async fn snapshot(pool: &PgPool) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -123,13 +130,22 @@ struct Totals {
     first_occurred_at: Option<DateTime<Utc>>,
     last_occurred_at: Option<DateTime<Utc>>,
     numeric_samples: i64,
-    numeric_min: Option<f64>,
-    numeric_max: Option<f64>,
-    numeric_avg: Option<f64>,
+    numeric_min: Option<String>,
+    numeric_max: Option<String>,
+    numeric_avg: Option<String>,
+}
+
+/// Convert exact aggregate text without PostgreSQL float8 overflow/underflow errors.
+/// IEEE-754 rounding may produce zero for tiny values; non-finite results are omitted.
+fn finite_statistic(value: Option<String>) -> Option<f64> {
+    value
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite())
 }
 
 #[async_trait]
 impl EventRepository for PostgresRepository {
+    /// Test one pooled connection with the configured acquisition and statement timeouts.
     async fn ready(&self) -> Result<(), Error> {
         sqlx::query("SELECT 1")
             .execute(self.pool()?)
@@ -138,6 +154,8 @@ impl EventRepository for PostgresRepository {
         Ok(())
     }
 
+    /// Insert one bound multi-row statement and commit atomically, restoring input order after RETURNING.
+    /// A failed insertion rolls back explicitly; an uncertain COMMIT is never automatically retried.
     async fn create(&self, events: &[EventCreate]) -> Result<Vec<Event>, Error> {
         let mut tx = self.pool()?.begin().await.map_err(write_error)?;
         let now = Utc::now();
@@ -178,6 +196,7 @@ impl EventRepository for PostgresRepository {
         Ok(result)
     }
 
+    /// Read a single UUID with bounded transient retries and no write side effects.
     async fn get(&self, id: Uuid) -> Result<Option<Event>, Error> {
         let pool = self.pool()?;
         self.read(|| {
@@ -188,6 +207,7 @@ impl EventRepository for PostgresRepository {
         .await
     }
 
+    /// Read count and bounded chronological page within one read-only snapshot.
     async fn list(&self, query: &ListQuery) -> Result<(i64, Vec<Event>), Error> {
         let pool = self.pool()?;
         self.read(|| async {
@@ -211,6 +231,7 @@ impl EventRepository for PostgresRepository {
         .await
     }
 
+    /// Interpolate only the enum-owned column; bind all temporal values before aggregating.
     async fn counts(&self, query: &CountsQuery) -> Result<Vec<Count>, Error> {
         let pool = self.pool()?;
         let column = query.group_by.column();
@@ -226,6 +247,7 @@ impl EventRepository for PostgresRepository {
         .await
     }
 
+    /// Aggregate date_trunc buckets explicitly in UTC with optional bound source/type filters.
     async fn timeseries(&self, query: &TimeseriesQuery) -> Result<Vec<Point>, Error> {
         let pool = self.pool()?;
         self.read(|| async {
@@ -239,21 +261,26 @@ impl EventRepository for PostgresRepository {
         }).await
     }
 
+    /// Aggregate exact numerics and dimensions under one snapshot; exclude oversized statistical samples.
+    /// Convert aggregate text in Rust so tiny magnitudes and cancellation cannot cause SQL cast failures.
     async fn summary(&self, query: &SummaryQuery) -> Result<SummaryResponse, Error> {
         let pool = self.pool()?;
         self.read(|| async {
             let mut tx = snapshot(pool).await?;
             let filters = query.filters();
             let mut sql = QueryBuilder::<Postgres>::new("WITH selected AS (SELECT *, CASE WHEN jsonb_typeof(payload -> ");
-            sql.push_bind(&query.numeric_field).push(") = 'number' THEN (payload ->> ")
-                .push_bind(&query.numeric_field).push(")::numeric ELSE NULL END AS numeric_value FROM events WHERE occurred_at >= ")
+            // Nested CASE guards numeric conversion independently of SQL predicate order.
+            // Keep the full finite float64 magnitude range, including values above 1e308.
+            sql.push_bind(&query.numeric_field).push(") = 'number' THEN CASE WHEN abs((payload ->> ")
+                .push_bind(&query.numeric_field).push(")::numeric) <= 1.7976931348623157e308 THEN (payload ->> ")
+                .push_bind(&query.numeric_field).push(")::numeric ELSE NULL END ELSE NULL END AS numeric_value FROM events WHERE occurred_at >= ")
                 .push_bind(query.from).push(" AND occurred_at < ").push_bind(query.to);
             if let Some(source) = &filters.source { sql.push(" AND source = ").push_bind(source); }
             if let Some(kind) = &filters.event_type { sql.push(" AND type = ").push_bind(kind); }
             sql.push(") SELECT count(*) AS total_events, count(DISTINCT source) AS unique_sources, count(DISTINCT type) AS unique_types,
                 min(occurred_at) AS first_occurred_at, max(occurred_at) AS last_occurred_at,
-                count(numeric_value) AS numeric_samples, min(numeric_value)::float8 AS numeric_min,
-                max(numeric_value)::float8 AS numeric_max, avg(numeric_value)::float8 AS numeric_avg FROM selected");
+                count(numeric_value) AS numeric_samples, min(numeric_value)::text AS numeric_min,
+                max(numeric_value)::text AS numeric_max, avg(numeric_value)::text AS numeric_avg FROM selected");
             let totals: Totals = sql.build_query_as().fetch_one(&mut *tx).await?;
             let by_type = filtered("SELECT type AS key, count(*) AS count FROM events", &query.window(), &filters)
                 .push(" GROUP BY type ORDER BY type").build_query_as().fetch_all(&mut *tx).await?;
@@ -265,7 +292,7 @@ impl EventRepository for PostgresRepository {
                 first_occurred_at: totals.first_occurred_at, last_occurred_at: totals.last_occurred_at,
                 by_type, by_source, numeric_summary: NumericSummary {
                     field: query.numeric_field.clone(), samples: totals.numeric_samples,
-                    min: totals.numeric_min, max: totals.numeric_max, avg: totals.numeric_avg,
+                    min: finite_statistic(totals.numeric_min), max: finite_statistic(totals.numeric_max), avg: finite_statistic(totals.numeric_avg),
                 }, window: query.window(), filters,
             })
         }).await
@@ -277,6 +304,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// Configure deterministic read-retry tests without network connections or wall-clock backoff.
     fn repository() -> PostgresRepository {
         PostgresRepository {
             pool: None,
@@ -286,6 +314,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Permit recovery on the final configured retry without exceeding the attempt budget.
     async fn transient_reads_retry_then_recover_within_bound() {
         let attempts = AtomicUsize::new(0);
         let result = repository()
@@ -304,6 +333,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Stop retries at the configured bound and expose only the semantic dependency error.
     async fn exhausted_reads_return_safe_dependency_error() {
         let attempts = AtomicUsize::new(0);
         let result: Result<(), Error> = repository()
@@ -317,6 +347,7 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Do not amplify a permanent SQL/protocol failure with redundant retries or leaked details.
     async fn nontransient_sql_errors_are_not_retried() {
         let attempts = AtomicUsize::new(0);
         let result: Result<(), Error> = repository()

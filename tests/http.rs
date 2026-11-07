@@ -7,6 +7,7 @@ use support::*;
 use tower::ServiceExt;
 
 #[tokio::test]
+/// Verify public probes, RBAC and sanitized failures, including NUL rejection without a database.
 async fn health_and_uniform_safe_errors() {
     let app = app(settings());
     assert_eq!(
@@ -71,6 +72,25 @@ async fn health_and_uniform_safe_errors() {
     .await;
     assert_error(&response, 422, "INVALID_INPUT");
     assert!(!response.1.to_string().contains("secret-input"));
+    for payload in [
+        json!({"value":"\u{0000}"}),
+        json!({"nested":[{"\u{0000}":1}]}),
+    ] {
+        let mut invalid = event("sensor-a", "id");
+        invalid["payload"] = payload;
+        assert_error(
+            &request(
+                &app,
+                "POST",
+                "/v1/events",
+                Some("test-producer"),
+                Some(invalid),
+            )
+            .await,
+            422,
+            "INVALID_INPUT",
+        );
+    }
     assert_error(
         &request(
             &app,
@@ -98,6 +118,7 @@ async fn health_and_uniform_safe_errors() {
 }
 
 #[tokio::test]
+/// Confirm intra-batch duplicate detection wins before attempting unavailable persistence.
 async fn duplicate_batch_is_rejected_before_storage() {
     let app = app(settings());
     let event = event("sensor-a", "id");
@@ -116,6 +137,7 @@ async fn duplicate_batch_is_rejected_before_storage() {
 }
 
 #[tokio::test]
+/// Normalize extractor failures and retain HTTP method semantics including the Allow header.
 async fn rejects_malformed_json_unknown_query_and_wrong_methods() {
     let app = app(settings());
     for path in [
@@ -160,6 +182,7 @@ async fn rejects_malformed_json_unknown_query_and_wrong_methods() {
 }
 
 #[tokio::test]
+/// Validate single correlation headers and prevent ambiguous multiple API-key authentication.
 async fn request_id_is_preserved_or_replaced_and_duplicate_keys_rejected() {
     let app = app(settings());
     for ids in [
@@ -201,6 +224,7 @@ async fn request_id_is_preserved_or_replaced_and_duplicate_keys_rejected() {
 }
 
 #[tokio::test]
+/// Ensure every protected operation exports security metadata and shared error responses.
 async fn generated_openapi_documents_all_routes_and_security() {
     let app = app(settings());
     let response = request(&app, "GET", "/openapi.json", None, None).await;

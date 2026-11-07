@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 use tower::ServiceExt;
 
+/// Return isolated deterministic credentials without reading or mutating the process environment.
 pub fn settings() -> Settings {
     Settings::from_map(&BTreeMap::from([
         ("EVENT_PRODUCER_KEY".into(), "test-producer".into()),
@@ -26,6 +27,7 @@ pub fn settings() -> Settings {
         ),
     ]))
 }
+/// Compose the real HTTP stack with a lazy PostgreSQL adapter for boundary tests.
 pub fn app(settings: Settings) -> Router {
     let repository = PostgresRepository::new(&settings);
     api::router(AppState {
@@ -33,9 +35,11 @@ pub fn app(settings: Settings) -> Router {
         service: EventService::new(Arc::new(repository)),
     })
 }
+/// Build a valid event whose natural key is owned by the calling test.
 pub fn event(source: &str, id: &str) -> Value {
     json!({"source": source, "external_id": id, "type": "temperature", "occurred_at": "2040-01-01T12:00:00Z", "payload": {"value": 23.5}})
 }
+/// Send an in-process HTTP request and collect status, parsed JSON and correlation header.
 pub async fn request(
     app: &Router,
     method: &str,
@@ -68,6 +72,7 @@ pub async fn request(
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     (status, serde_json::from_slice(&bytes).unwrap(), id)
 }
+/// Assert the exact public error envelope, fixed message and matching request/body identifiers.
 pub fn assert_error(response: &(StatusCode, Value, String), status: u16, code: &str) {
     assert_eq!(response.0.as_u16(), status);
     assert_eq!(response.1["error"]["code"], code);
@@ -101,6 +106,7 @@ pub struct Database {
     pub source: String,
 }
 impl Database {
+    /// Require a dedicated test DB, validate URL consistency, migrate and allocate an owned UUID source.
     pub async fn new() -> Self {
         let url = std::env::var("TEST_DATABASE_URL")
             .expect("set TEST_DATABASE_URL to a dedicated *_test database");
@@ -125,12 +131,15 @@ impl Database {
             source: format!("test-{}", uuid::Uuid::new_v4().simple()),
         }
     }
+    /// Build a separate lazy pool using the same isolated test configuration.
     pub fn repository(&self) -> PostgresRepository {
         PostgresRepository::new(&self.settings)
     }
+    /// Compose an HTTP application connected only to the validated integration-test database.
     pub fn app(&self) -> Router {
         app(self.settings.clone())
     }
+    /// Delete only this test's source rows and close its pool, without truncating shared tables.
     pub async fn cleanup(self) {
         sqlx::query("DELETE FROM events WHERE source = $1")
             .bind(&self.source)

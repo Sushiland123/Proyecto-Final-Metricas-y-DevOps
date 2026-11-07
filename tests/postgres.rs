@@ -5,15 +5,18 @@ use event_service::{MIGRATOR, domain::*, error::Error, repository::EventReposito
 use serde_json::{Value, json};
 use support::*;
 
+/// Build one typed event with the shared wire fixture for direct repository tests.
 fn input(source: &str, id: &str) -> EventCreate {
     serde_json::from_value(event(source, id)).unwrap()
 }
+/// Restrict HTTP queries to the source uniquely allocated by the current test.
 fn window(source: &str) -> String {
     format!("from=2040-01-01T12:00:00Z&to=2040-01-01T13:00:00Z&source={source}")
 }
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Verify round-trip data, numeric precision, duplicate immutability and the complete listing envelope.
 async fn ingestion_get_duplicate_and_pagination() {
     let db = Database::new().await;
     let app = db.app();
@@ -114,6 +117,7 @@ async fn ingestion_get_duplicate_and_pagination() {
     .await;
     assert_eq!(page.0, 200);
     assert_eq!(page.1["total"], 4);
+    assert_eq!(page.1["filters"], json!({"source":db.source,"type":null}));
     assert_eq!(page.1["items"][0]["external_id"], "page-1");
     assert_eq!(page.1["items"][1]["external_id"], "page-2");
     let filtered = request(
@@ -125,11 +129,16 @@ async fn ingestion_get_duplicate_and_pagination() {
     )
     .await;
     assert_eq!(filtered.1["total"], 2);
+    assert_eq!(
+        filtered.1["filters"],
+        json!({"source":db.source,"type":"status"})
+    );
     db.cleanup().await;
 }
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Ensure storage collisions roll back the full batch and all source permissions precede insertion.
 async fn batch_is_atomic_and_source_scope_is_enforced() {
     let db = Database::new().await;
     let app = db.app();
@@ -186,6 +195,7 @@ async fn batch_is_atomic_and_source_scope_is_enforced() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Race two transactions for one natural key and verify only the confirmed winner is readable.
 async fn concurrent_duplicate_has_exactly_one_winner() {
     let db = Database::new().await;
     let repository = db.repository();
@@ -207,6 +217,7 @@ async fn concurrent_duplicate_has_exactly_one_winner() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Verify equivalent offsets, inclusive start/exclusive end, both dimensions and empty intervals.
 async fn counts_use_half_open_utc_windows_and_sorted_buckets() {
     let db = Database::new().await;
     let repository = db.repository();
@@ -249,6 +260,7 @@ async fn counts_use_half_open_utc_windows_and_sorted_buckets() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Validate UTC resolutions, numeric-only samples and null/empty aggregate contracts against PostgreSQL.
 async fn timeseries_summary_and_empty_results() {
     let db = Database::new().await;
     let app = db.app();
@@ -331,6 +343,67 @@ async fn timeseries_summary_and_empty_results() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Prevent oversized JSON numerics from denying analyst reads while preserving their exact stored data.
+/// Also exercise valid values above 1e308 and underflow/cancellation during float64 conversion.
+async fn summary_handles_extreme_numeric_payloads_without_losing_events() {
+    let db = Database::new().await;
+    let app = db.app();
+    for (index, number) in ["1e400", "-1e400", "1e-400", "1.5e308", "-1.5e308", "0"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut value = event(&db.source, &format!("extreme-{index}"));
+        value["payload"]["value"] = serde_json::from_str(number).unwrap();
+        let response = request(
+            &app,
+            "POST",
+            "/v1/events",
+            Some("test-producer"),
+            Some(value),
+        )
+        .await;
+        assert_eq!(response.0, 201);
+    }
+    let summary = request(
+        &app,
+        "GET",
+        &format!("/v1/analysis/summary?{}", window(&db.source)),
+        Some("test-analyst"),
+        None,
+    )
+    .await;
+    assert_eq!(summary.0, 200);
+    assert_eq!(summary.1["total_events"], 6);
+    assert_eq!(summary.1["numeric_summary"]["samples"], 4);
+    assert_eq!(summary.1["numeric_summary"]["min"].as_f64(), Some(-1.5e308));
+    assert_eq!(summary.1["numeric_summary"]["max"].as_f64(), Some(1.5e308));
+    assert_eq!(summary.1["numeric_summary"]["avg"].as_f64(), Some(0.0));
+    // Unrepresentable statistical samples are still available as exact event data.
+    let listed = request(
+        &app,
+        "GET",
+        &format!("/v1/events?{}", window(&db.source)),
+        Some("test-analyst"),
+        None,
+    )
+    .await;
+    assert_eq!(listed.1["total"], 6);
+    let huge = listed.1["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["external_id"] == "extreme-0")
+        .unwrap();
+    assert_eq!(
+        huge["payload"]["value"].to_string(),
+        format!("1{}", "0".repeat(400))
+    );
+    db.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Reopen persistence with a fresh pool, reapply migrations and verify data plus required indexes.
 async fn data_survives_new_pool_and_repeated_migrations() {
     let db = Database::new().await;
     let repository = db.repository();
@@ -370,6 +443,7 @@ async fn data_survives_new_pool_and_repeated_migrations() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Confirm deduplication uses the full source/external-ID pair rather than a global external ID.
 async fn external_id_can_repeat_in_different_source() {
     let db = Database::new().await;
     let second = Database::new().await;
@@ -385,6 +459,7 @@ async fn external_id_can_repeat_in_different_source() {
 
 // A private schema isolates migration adoption tests without dropping any shared
 // objects. The schema name is generated by this test, never supplied by a client.
+/// Create an experiment-owned schema and pool so migration tests cannot alter shared application tables.
 async fn isolated_schema(db: &Database) -> (String, sqlx::PgPool) {
     let name = format!("migration_{}", uuid::Uuid::new_v4().simple());
     sqlx::query(&format!("CREATE SCHEMA {name}"))
@@ -411,6 +486,7 @@ async fn isolated_schema(db: &Database) -> (String, sqlx::PgPool) {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Adopt an existing compatible schema without changing events or historical migration metadata.
 async fn migration_adopts_legacy_schema_without_rewriting_data() {
     let db = Database::new().await;
     let (schema, pool) = isolated_schema(&db).await;
@@ -448,6 +524,7 @@ async fn migration_adopts_legacy_schema_without_rewriting_data() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Abort adoption of an incompatible table and verify its existing row remains untouched.
 async fn migration_rejects_incompatible_existing_table() {
     let db = Database::new().await;
     let (schema, pool) = isolated_schema(&db).await;

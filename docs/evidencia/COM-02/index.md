@@ -10,4 +10,4 @@ Reproducir: `cargo test --locked --test service`, `cargo doc --locked --no-deps`
 
 ## Verificación local del contenedor · 2026-11-07
 
-Se construyó el Dockerfile final con Podman: imagen `localhost/pfmdo-rust-review:latest`, ID `f329f5b235d988764cfaa8b8daff1706c205fa43390b7e24ef80688ad24c44ba`, tamaño local 93,962,548 bytes y usuario `10001:10001`. Se ejecutó el binario release del contenedor: exportó OpenAPI válido, atendió liveness con 200 y readiness con 503 sin DB, incluyendo error seguro y Request-ID. Es una prueba local, no publicación de imagen ni despliegue cloud.
+Se construyó con Podman el Dockerfile de la versión inicial del PR (`8aaab61`): imagen `localhost/pfmdo-rust-review:latest`, ID `f329f5b235d988764cfaa8b8daff1706c205fa43390b7e24ef80688ad24c44ba`, tamaño local 93,962,548 bytes y usuario `10001:10001`. Se ejecutó el binario release del contenedor: exportó OpenAPI válido, atendió liveness con 200 y readiness con 503 sin DB, incluyendo error seguro y Request-ID. Es una prueba local, no publicación de imagen ni despliegue cloud; las revisiones posteriores se verifican de nuevo en CI.
