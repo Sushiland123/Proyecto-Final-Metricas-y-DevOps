@@ -1,36 +1,23 @@
-# Proyecto Final — Métricas y DevOps
+# Proyecto Final — Métricas y DevOps · Rust
 
-Repositorio de trabajo del proyecto final. El backlog está compuesto por **27 issues** que cubren los requisitos evaluables de los grupos **3.1 Aplicación y arquitectura**, **3.2 DevOps** y **3.3 Métricas de Software y observabilidad**, cada uno con su evidencia mínima, trabajo propuesto, criterios de aceptación y Definition of Done.
+Plataforma de **ingesta y análisis de eventos (Escenario 3, COM-01…06)** implementada íntegramente en **Rust**, con **Axum, Tokio, SQLx y PostgreSQL 16**. Servicio, pruebas y herramientas de verificación bajo Cargo; un binario, un monolito modular y persistencia transaccional.
 
-> **Nombre del repositorio:** GitHub no admite espacios en el nombre, por lo que normalizó el solicitado *"Proyecto Final Metricas y DevOps"* a `Proyecto-Final-Metricas-y-DevOps`. Esta es la URL canónica.
+- Repositorio: <https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps>
+- Ingesta individual y en lotes atómicos de 1–100 eventos; deduplicación `(source, external_id)`.
+- Consulta por UUID, listado paginado con filtros y ventanas UTC semiabiertas `[from, to)`.
+- Conteos por tipo/fuente, series `minute|hour|day` y estadísticas sobre campos numéricos JSONB.
+- API keys con RBAC (`producer`, `analyst`), restricciones por fuente, errores seguros y `X-Request-ID`.
+- Pool asíncrono acotado, timeouts, reintentos de lectura y apagado ordenado SIGINT/SIGTERM.
 
-- **URL:** <https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps>
-- **Milestones:** `3.1 Aplicación y arquitectura`, `3.2 DevOps` y `3.3 Métricas de Software y observabilidad`
-- **Escenario asignado:** **Escenario 3: Ingesta y Análisis de Eventos** (requisitos COM-01 a COM-06).
+## Arranque local
 
----
-
-## Escenario 3: Ingesta y Análisis de Eventos (COM-01 a COM-06)
-
-Se implementa una plataforma de ingesta y análisis analítico de eventos sobre FastAPI y PostgreSQL 16 con SQLAlchemy 2 y psycopg 3:
-- **Ingesta individual (`POST /v1/events`) y en lote atómico (`POST /v1/events/batch`):** Inserción transaccional con deduplicación estricta por tupla `(source, external_id)`.
-- **Exploración de eventos (`GET /v1/events` y `GET /v1/events/{id}`):** Consulta puntual por UUID y listado paginado (`limit`, `offset`) con filtros opcionales por fuente y tipo sobre ventana semiabierta UTC `[from, to)`.
-- **Análisis y agregaciones (`GET /v1/analysis/*`):** Conteos dimensionales por tipo o fuente (`/counts`), análisis de series temporales por intervalos (`/timeseries` con buckets `minute`, `hour`, `day`) y resúmenes estadísticos (`/summary` con min, max, avg de campos numéricos del JSONB).
-- **Control de acceso y segregación (COM-05):** RBAC estricto mediante cabecera `X-API-Key` (`producer` para ingesta, `analyst` para lectura) y soporte de aislamiento lateral por fuente emisora (`EVENT_PRODUCER_SOURCE_KEYS`).
-- **Resiliencia y manejo de errores (COM-04):** Manejo de errores seguros y estructurados con `X-Request-ID`, `pool_pre_ping=True`, timeouts acotados y reintentos con backoff en lecturas operacionales.
-
-Consulte la [matriz de reglas y contratos del Escenario 3](docs/escenario.md) para la trazabilidad completa regla → prueba.
-
----
-
-## Arranque local reproducible
-
-Requiere Python 3.12 o 3.13, [`uv`](https://docs.astral.sh/uv/) y Docker Compose o Podman Compose. Desde la raíz del repositorio:
+Requiere Rust (la versión está fijada en `rust-toolchain.toml`), Docker Compose o Podman Compose, `openssl` y `curl`. Cargo descarga las dependencias fijadas en `Cargo.lock`. La aplicación **no carga `.env` automáticamente**.
 
 ```bash
-uv sync --locked
+cargo build --locked
 
-cat > .env <<EOF
+# Solo la primera vez: no sobrescribir un .env existente.
+test ! -e .env && cat > .env <<EOF
 POSTGRES_USER=events
 POSTGRES_DB=events_test
 POSTGRES_PORT=15433
@@ -39,134 +26,105 @@ EVENT_PRODUCER_KEY=$(openssl rand -hex 16)
 EVENT_ANALYST_KEY=$(openssl rand -hex 16)
 EVENT_PRODUCER_SOURCE_KEYS=sensor-a:$(openssl rand -hex 16),sensor-b:$(openssl rand -hex 16)
 EOF
-set -a; . ./.env; set +a
-cat >> .env <<EOF
-DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}
-TEST_DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}
-EOF
-set -a; . ./.env; set +a
 chmod 600 .env
+set -a; . ./.env; set +a
+export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}"
+export TEST_DATABASE_URL="$DATABASE_URL"
 
-# Iniciar contenedor PostgreSQL de prueba
-docker compose up -d postgres
-
-# Esperar a que PostgreSQL esté listo
-for intento in $(seq 1 30); do
-  if docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"; then
-    break
-  fi
-  sleep 1
-done
-
-# Aplicar migraciones versionadas (incluye tabla e índices compuestos)
-uv run --locked alembic upgrade head
-
-# Iniciar servicio web
-uv run uvicorn event_service.main:app --host 127.0.0.1 --port 8000
+docker compose up -d --wait postgres
+cargo run --locked -- migrate
+cargo run --locked -- serve
 ```
 
-`.env` está en `.gitignore`: no lo commitees. En otra terminal con el mismo `.env`, prueba la API:
+API en `http://127.0.0.1:8000`. Para Podman, sustituir `docker compose` por el proveedor Compose instalado. Si no admite `--wait`, esperar con `pg_isready` antes de migrar. Las credenciales deben estar disponibles también al ejecutar comandos en otra terminal. Usar contraseñas URL-encoded si contienen caracteres reservados; los secretos hexadecimales del ejemplo no los necesitan.
 
 ```bash
-set -a; . ./.env; set +a
-
-# 1. Sondas de salud
 curl -i http://127.0.0.1:8000/health/live
 curl -i http://127.0.0.1:8000/health/ready
-
-# 2. Ingesta puntual (Rol producer)
 curl -i -H "X-API-Key: $EVENT_PRODUCER_KEY" -H 'Content-Type: application/json' \
   -d '{"source":"sensor-a","external_id":"e-001","type":"temperature","occurred_at":"2026-10-21T12:00:00Z","payload":{"value":23.5}}' \
   http://127.0.0.1:8000/v1/events
-
-# 3. Ingesta en lote atómica (Rol producer)
-curl -i -H "X-API-Key: $EVENT_PRODUCER_KEY" -H 'Content-Type: application/json' \
-  -d '{"events":[{"source":"sensor-a","external_id":"e-002","type":"temperature","occurred_at":"2026-10-21T12:05:00Z","payload":{"value":24.1}},{"source":"sensor-a","external_id":"e-003","type":"temperature","occurred_at":"2026-10-21T12:10:00Z","payload":{"value":22.8}}]}' \
-  http://127.0.0.1:8000/v1/events/batch
-
-# 4. Exploración paginada (Rol analyst)
-curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
-  --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
-  --data-urlencode 'source=sensor-a' --data-urlencode 'limit=10' \
-  http://127.0.0.1:8000/v1/events
-
-# 5. Agregación y conteos por dimensión (Rol analyst)
 curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
   --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
   --data-urlencode 'group_by=type' http://127.0.0.1:8000/v1/analysis/counts
-
-# 6. Análisis de series temporales (Rol analyst)
-curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
-  --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
-  --data-urlencode 'bucket=hour' http://127.0.0.1:8000/v1/analysis/timeseries
-
-# 7. Resumen estadístico sobre carga útil (Rol analyst)
-curl -G -H "X-API-Key: $EVENT_ANALYST_KEY" \
-  --data-urlencode 'from=2026-10-21T00:00:00Z' --data-urlencode 'to=2026-10-22T00:00:00Z' \
-  --data-urlencode 'numeric_field=value' http://127.0.0.1:8000/v1/analysis/summary
-
-# 8. Ejecución de la suite completa de pruebas
-mkdir -p artifacts
-uv run --locked pytest --junitxml=artifacts/junit.xml --html=artifacts/acceptance.html --self-contained-html
 ```
 
----
+## API y documentación del código
 
-## Backlog
+- [Guía de API, contratos, ejemplos y errores](docs/api.md).
+- `/openapi.json`: OpenAPI generado por Utoipa desde rutas y tipos Rust.
+- `/docs`: visor local sin dependencias CDN.
+- `cargo run --locked -- openapi > openapi.json`: exportar el contrato sin base de datos.
+- `cargo doc --locked --no-deps --open`: documentación Rust de módulos y contratos.
+- [Arquitectura y guía de contribución](docs/desarrollo.md), [matriz regla → prueba](docs/escenario.md).
+- [Runbook operativo y controles de entrega](docs/operaciones.md).
 
-### 3.1 Aplicación y arquitectura (Escenario 3)
+## Calidad y pruebas
 
-| ID | Requisito | Evidencia mínima | Issue |
-|---|---|---|---|
-| COM-01 | Implementar las funciones y reglas del escenario | Pruebas de aceptación ejecutables y resultados verificables | [#1](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/1) |
-| COM-02 | Definir y justificar límites y responsabilidades | Diagrama de arquitectura real y decisiones | [#2](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/2) |
-| COM-03 | Persistir la información exigida | Persistencia ante reinicio de componentes | [#3](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/3) |
-| COM-04 | Manejar errores y validar entradas | Pruebas positivas, negativas y de recuperación | [#4](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/4) |
-| COM-05 | Controles de acceso cuando corresponda | Pruebas de acceso autorizado y rechazado | [#5](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/5) |
-| COM-06 | Trade-offs de consistencia, disponibilidad, costo y complejidad | Registro de decisiones y alternativas descartadas | [#6](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/6) |
+```bash
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets
+RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps
 
-### 3.2 DevOps
+# Obligatorio para aceptación: PostgreSQL activo y TEST_DATABASE_URL definido.
+# Debe nombrar una BD test_* o *_test; DATABASE_URL, si existe, debe coincidir.
+cargo test --locked --test postgres -- --ignored --nocapture
+```
 
-| ID | Requisito | Evidencia mínima | Issue |
-|---|---|---|---|
-| DEV-01 | Versionar aplicación, infraestructura y configuración no secreta | Repositorio e historial con PRs revisados | [#7](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/7) |
-| DEV-02 | Distribuir componentes como imágenes de contenedor | Dockerfiles, imágenes versionadas y trazables | [#8](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/8) |
-| DEV-03 | Integración continua con GitHub Actions | Checks en PR y protección de rama | [#9](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/9) |
-| DEV-04 | Automatizar build y publicación de imágenes | Vínculo commit → workflow → imagen | [#10](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/10) |
-| DEV-05 | Entrega controlada con validación y producción separadas | Workflow, aprobaciones y despliegue | [#11](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/11) |
-| DEV-06 | Recursos principales de Azure con Terraform | Código, plan revisable y apply controlado | [#12](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/12) |
-| DEV-07 | Estado remoto de Terraform protegido | Backend y procedimiento de inicialización | [#13](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/13) |
-| DEV-08 | Validación de Terraform en GitHub Actions | Validación y plan sin apply en PRs no aprobados | [#14](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/14) |
-| DEV-09 | Instalar y operar K3s en VM de Azure | Nodos y workloads verificables | [#15](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/15) |
-| DEV-10 | Separar configuración y secretos; privilegio mínimo | Configuración, secretos y evidencia de permisos | [#16](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/16) |
-| DEV-11 | Salud y recursos de los workloads | Probes, requests y límites justificados | [#17](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/17) |
-| DEV-12 | Recuperar una versión funcional tras un despliegue defectuoso | Demostración de rollback y verificación | [#18](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/18) |
-| DEV-13 | Reconstruir el ambiente con procedimiento documentado | Instrucciones y prerrequisitos explícitos | [#19](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/19) |
-| DEV-14 | Consumo de Azure bajo US$100 | Estimación, cargos, alertas y detención/eliminación | [#20](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/20) |
+Las pruebas PostgreSQL están marcadas `ignored` para separar unitarias de integración, **no para omitirlas en CI**: el job `postgres` las ejecuta explícitamente y falla si falta la base. Cada prueba usa fuentes únicas; no se truncan tablas ni se elimina información ajena.
 
-### 3.3 Métricas de Software y observabilidad
+Experimento real de recuperación y durabilidad, contra **otro puerto libre y una base de prueba dedicada**:
 
-| ID | Requisito | Evidencia mínima | Issue |
-|---|---|---|---|
-| MET-01 | Definir indicadores técnicos y de comportamiento | Catálogo con definición, unidad, fuente, cálculo y propósito | [#21](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/21) |
-| MET-02 | Incorporar logs estructurados | Registros con identificadores de correlación | [#22](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/22) |
-| MET-03 | Instrumentar métricas de aplicación e infraestructura | Consultas y series temporales verificables | [#23](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/23) |
-| MET-04 | Instrumentar trazas con OpenTelemetry | Trazas consultables y correlación entre señales | [#24](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/24) |
-| MET-05 | Construir dashboards para preguntas operativas | Paneles interpretables con unidades y ventanas | [#25](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/25) |
-| MET-06 | Configurar alertas justificadas | Regla, activación y análisis de falsos positivos | [#26](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/26) |
-| MET-07 | Analizar una degradación inducida y su recuperación | Secuencia temporal, evidencia, interpretación y límites | [#27](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/27) |
+```bash
+export POSTGRES_USER=events POSTGRES_DB=events_test POSTGRES_PORT=15434
+export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}"
+cargo build --locked --bin event-service
+cargo run --locked --example verify_system
+# Con Podman: CONTAINER_ENGINE=podman cargo run --locked --example verify_system
+```
 
----
+El experimento crea su propio contenedor/volumen: comprueba `200 → 503 → 200` en el mismo proceso API y después reinicia API + PostgreSQL para comparar el evento completo. Al salir detiene el contenedor, **conservando contenedor y volumen**; imprime sus nombres para limpieza manual. Logs en `artifacts/system-api.log`. No ejecutarlo contra producción.
 
-## Evidencia y Arquitectura
+## Contenedor
 
-- [Especificación formal y matriz regla → test del Escenario 3](docs/escenario.md)
-- [Vista de contexto y límites (C4 Context)](docs/arquitectura/contexto.md)
-- [Vista de contenedores y módulos (C4 Container)](docs/arquitectura/contenedores.md)
-- [Vista de despliegue](docs/arquitectura/despliegue.md)
-- [Persistencia y durabilidad de datos](docs/arquitectura/persistencia.md)
-- [Manejo de errores, validación y recuperación](docs/arquitectura/errores.md)
-- [Control de acceso y segregación](docs/arquitectura/acceso.md)
-- [Registro de compromisos y trade-offs (COM-06)](docs/arquitectura/tradeoffs.md)
-- [ADRs del proyecto](docs/adr/0001-descomposicion.md)
-- Carpeta de evidencias por requisito: `docs/evidencia/COM-0X/`
+```bash
+docker compose --profile app build api
+docker compose up -d --wait postgres
+docker compose --profile app run --rm api migrate
+docker compose --profile app up -d api
+```
+
+Imagen multi-stage, usuario no root, puerto 8000 y migraciones SQL embebidas. No incluir secretos en la imagen. Compose usa la red interna para PostgreSQL. En Kubernetes, ejecutar `event-service migrate` como Job antes del despliegue y configurar probes HTTP. **Azure, K3s, Terraform y publicación de imágenes siguen siendo trabajo pendiente del backlog**; el Dockerfile no acredita un despliegue en la nube.
+
+## Configuración
+
+| Variable | Predeterminado / contrato |
+|---|---|
+| `DATABASE_URL` | `postgresql://user:password@host:5432/database`; sin valor, liveness funciona y datos/readiness devuelven 503 |
+| `EVENT_PRODUCER_KEY`, `EVENT_ANALYST_KEY` | Obligatorias para rutas protegidas; distintas y no vacías |
+| `EVENT_PRODUCER_SOURCE_KEYS` | Opcional: `sensor-a:clave,sensor-b:otra`; una clave puede habilitar varias fuentes |
+| `BIND_ADDR` | `127.0.0.1:8000` (contenedor: `0.0.0.0:8000`) |
+| `DB_CONNECT_TIMEOUT_SECONDS` | 3; rango 1–60; acota adquisición/conexión del pool |
+| `DB_STATEMENT_TIMEOUT_MS` | 5000; rango 100–60000; por sentencia |
+| `DB_READ_MAX_RETRIES` | 1; rango 0–5; nunca reintenta escrituras |
+| `DB_READ_RETRY_BACKOFF_MS` | 50; rango 0–2000; backoff exponencial asíncrono |
+| `RUST_LOG` | `event_service=info,sqlx=off`; no activar logs de SQL en entornos con datos sensibles |
+
+Las opciones numéricas inválidas usan su valor predeterminado; las claves ambiguas o mal formadas **fallan cerrado**. La configuración se lee al iniciar: para rotar secretos hay que reiniciar el proceso. Cuerpo HTTP máximo: 4 MiB; payload de cada evento: 16 KiB serializado en UTF-8.
+
+## Migración desde la versión Python
+
+Ver [ADR-0004](docs/adr/0004-rust.md) y [persistencia](docs/arquitectura/persistencia.md). Cambiar DSN `postgresql+psycopg://` a `postgresql://`. SQLx conserva tabla, índices y datos del esquema anterior; usa `_sqlx_migrations` y deja `alembic_version` intacta. Hacer backup y verificar compatibilidad en una copia antes de migrar una base existente. No ejecutar ambos gestores de migraciones a la vez.
+
+## Backlog del curso
+
+Se conservan los **27 issues** y tres milestones. Una migración de lenguaje no cierra automáticamente requisitos DevOps ni de observabilidad.
+
+| Grupo | Requisitos e issues |
+|---|---|
+| **3.1 Aplicación y arquitectura** | COM-01 funciones [#1](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/1), COM-02 límites [#2](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/2), COM-03 persistencia [#3](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/3), COM-04 errores [#4](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/4), COM-05 acceso [#5](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/5), COM-06 trade-offs [#6](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/6) |
+| **3.2 DevOps** | DEV-01 versionamiento #7; DEV-02 contenedores #8; DEV-03 CI #9; DEV-04 publicación #10; DEV-05 entrega controlada #11; DEV-06 Terraform Azure #12; DEV-07 estado remoto #13; DEV-08 validación Terraform #14; DEV-09 K3s #15; DEV-10 secretos #16; DEV-11 probes/recursos #17; DEV-12 rollback #18; DEV-13 reconstrucción #19; DEV-14 presupuesto < US$100 #20 |
+| **3.3 Métricas y observabilidad** | MET-01 indicadores #21; MET-02 logs #22; MET-03 métricas #23; MET-04 OpenTelemetry #24; MET-05 dashboards #25; MET-06 alertas #26; MET-07 degradación inducida #27 |
+
+Consultar cada issue en el [backlog canónico](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues). [Evidencias COM](docs/evidencia/README.md) · [contexto](docs/arquitectura/contexto.md) · [módulos](docs/arquitectura/contenedores.md) · [despliegue](docs/arquitectura/despliegue.md) · [errores](docs/arquitectura/errores.md) · [acceso](docs/arquitectura/acceso.md) · [trade-offs](docs/arquitectura/tradeoffs.md).

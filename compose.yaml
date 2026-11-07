@@ -1,4 +1,22 @@
 services:
+  api:
+    build: .
+    profiles: [app]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-events}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-events}
+      EVENT_PRODUCER_KEY: ${EVENT_PRODUCER_KEY:?EVENT_PRODUCER_KEY is required}
+      EVENT_ANALYST_KEY: ${EVENT_ANALYST_KEY:?EVENT_ANALYST_KEY is required}
+      EVENT_PRODUCER_SOURCE_KEYS: ${EVENT_PRODUCER_SOURCE_KEYS:-}
+      BIND_ADDR: 0.0.0.0:8000
+      DB_CONNECT_TIMEOUT_SECONDS: ${DB_CONNECT_TIMEOUT_SECONDS:-3}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-5000}
+      DB_READ_MAX_RETRIES: ${DB_READ_MAX_RETRIES:-1}
+      DB_READ_RETRY_BACKOFF_MS: ${DB_READ_RETRY_BACKOFF_MS:-50}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
   postgres:
     image: postgres:16
     environment:

@@ -30,6 +30,7 @@ __pycache__/
 htmlcov/
 reports/
 artifacts/
+target/
 *.egg-info/
 
 # SO y editores

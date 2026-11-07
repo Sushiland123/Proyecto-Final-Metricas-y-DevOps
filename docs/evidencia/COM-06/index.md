@@ -1,20 +1,14 @@
-# COM-06 — Evidencia de trade-offs y compromisos técnicos (Escenario 3)
+# COM-06 · Trade-offs y decisiones · Rust
 
-**Issue:** [#6](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/6). Registro explícito de compromisos técnicos en consistencia, disponibilidad, costo, complejidad, control de acceso y analítica para el **Escenario 3**.
+[Issue #6](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/6). Criterio: decisiones explícitas sobre consistencia, disponibilidad, coste y complejidad.
 
-## 1. Documentación de compromisos
+Ver [registro de trade-offs](../../arquitectura/tradeoffs.md) y [ADR de plataforma Rust](../../adr/0004-rust.md).
 
-El análisis completo y las alternativas descartadas se encuentran en [docs/arquitectura/tradeoffs.md](../../arquitectura/tradeoffs.md).
+1. ACID/201 tras COMMIT frente a cola con aceptación diferida.
+2. Monolito modular con puerto de repositorio frente a microservicios/framework DI.
+3. SQLx async y pool acotado, sin cambiar la autoridad de PostgreSQL.
+4. API keys por rol/fuente frente a un IdP no requerido.
+5. Plataforma íntegramente Rust, con compilación, pruebas y herramientas de verificación bajo Cargo; mejoras cuantitativas sujetas a benchmark.
+6. Objetivo Azure < US$100 sujeto a validación de infraestructura, cargos y políticas de uso.
 
-Principales trade-offs registrados:
-1. **Consistencia fuerte inmediata (ACID):** Confirmación tras `COMMIT` relacional (individual y batch con rollback atómico) vs cola asíncrona de consistencia eventual.
-2. **Disponibilidad de nodo único:** Proceso web desacoplado y PostgreSQL con volumen montado en K3s vs clúster multizona HA.
-3. **Costo controlado (< US$100):** Dimensionamiento eficiente en una VM Azure `Standard_B2s` con margen presupuestario vs múltiples servicios PaaS administrados.
-4. **Complejidad contenida:** Monolito modular por capas cohesivas vs arquitectura distribuida de microservicios.
-5. **Control de acceso enfocado:** RBAC y aislamiento lateral por origen mediante API Keys seguras vs Identity Provider OAuth2/OIDC externo.
-6. **Analítica en tiempo real:** Agregaciones nativas con índices compuestos sobre tabla relacional vs base de datos columnar separada.
-
-## 2. Coherencia con el código y despliegue
-
-- Las decisiones están sustentadas en el código fuente (`src/event_service/`), las migraciones Alembic y la suite de pruebas.
-- Se vinculan directamente con los registros [ADR-0001](../../adr/0001-descomposicion.md), [ADR-0002](../../adr/0002-almacenamiento.md) y [ADR-0003](../../adr/0003-comunicacion.md).
+Contrastar con `src/`, `migrations/`, pruebas Rust y CI. Los resultados locales no acreditan despliegue Azure, cumplimiento de SLA ni capacidad sostenida de producción. El historial de decisiones se conserva en Git.

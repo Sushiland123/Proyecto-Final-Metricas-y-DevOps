@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Event Service API</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body><h1>Event Service · Rust</h1><p>Contrato generado desde los tipos y rutas del servicio:</p>
+<p><a href="/openapi.json">OpenAPI JSON</a> · <a href="https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/blob/main/docs/api.md">Guía y ejemplos</a></p>
+<p>Autenticación: cabecera <code>X-API-Key</code>. Ventanas UTC semiabiertas <code>[from, to)</code>.</p>
+<pre id="spec">Cargando contrato…</pre><script>
+fetch('/openapi.json').then(r => r.json()).then(s => {
+  document.getElementById('spec').textContent = JSON.stringify(s, null, 2);
+}).catch(() => { document.getElementById('spec').textContent = 'No se pudo cargar el contrato.'; });
+</script></body></html>
