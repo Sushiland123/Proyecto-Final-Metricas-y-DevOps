@@ -2,6 +2,10 @@
 
 Cada requisito (`COM-01` … `COM-06`, `DEV-01` … `DEV-14`) debe tener evidencia verificable enlazada desde su issue.
 
+## Migración Rust
+
+Los índices COM enlazan código y pruebas Rust. El historial de la versión anterior permanece en Git (`6ef42ba`); sus resultados no acreditan la nueva implementación. CI produce `rust-api-and-code-docs` y `rust-postgres-evidence`. Enlazar la ejecución real del PR cuando exista, sin inventar URLs ni dar por ejecutado GitHub Actions desde una prueba local. El experimento real está en `examples/verify_system.rs`; conserva su volumen y deja logs en `artifacts/`.
+
 ## Estructura
 
 ```text

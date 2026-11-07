@@ -1,4 +1,4 @@
-name: COM-01 acceptance
+name: Rust quality and acceptance
 
 on:
   pull_request:
@@ -8,9 +8,38 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  acceptance:
+  quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets
+      - name: Build code documentation
+        run: cargo doc --locked --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Export API contract
+        run: cargo run --locked -- openapi > openapi.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-api-and-code-docs
+          path: |
+            openapi.json
+            target/doc
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16-alpine
@@ -18,43 +47,50 @@ jobs:
           POSTGRES_USER: acceptance
           POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: events_test
-        ports:
-          - 5432:5432
+        ports: [5432:5432]
         options: >-
           --health-cmd "pg_isready -U acceptance -d events_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
+          --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      DATABASE_URL: postgresql+psycopg://acceptance:ci-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/events_test
-      TEST_DATABASE_URL: postgresql+psycopg://acceptance:ci-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/events_test
-      EVENT_PRODUCER_KEY: ci-producer-${{ github.run_id }}-${{ github.run_attempt }}
-      EVENT_ANALYST_KEY: ci-analyst-${{ github.run_id }}-${{ github.run_attempt }}
-      EVENT_PRODUCER_SOURCE_KEYS: sensor-a:ci-sensor-a-${{ github.run_id }},sensor-b:ci-sensor-b-${{ github.run_id }}
-      PYTHONPATH: src
+      DATABASE_URL: postgresql://acceptance:ci-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/events_test
+      TEST_DATABASE_URL: postgresql://acceptance:ci-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/events_test
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - name: Instalar dependencias fijadas
-        run: uv sync --locked
-      - name: Preparar directorio de reportes
-        run: mkdir -p artifacts
-      - name: Aplicar migraciones
-        run: uv run --locked alembic upgrade head
-      - name: Ejecutar pruebas de aceptación e integración
-        run: >-
-          uv run --locked pytest
-          --junitxml=artifacts/junit.xml
-          --html=artifacts/acceptance.html --self-contained-html
-      - name: Publicar JUnit y HTML incluso si falla la suite
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run --locked -- migrate
+      - name: PostgreSQL acceptance (missing DB is a failure, not a skip)
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          cargo test --locked --test postgres -- --ignored --nocapture 2>&1 | tee artifacts/postgres.txt
+      - name: Restart and recovery experiment
+        shell: bash
+        env:
+          DATABASE_URL: postgresql://events:ci-system-${{ github.run_id }}@127.0.0.1:15434/events_test
+          POSTGRES_USER: events
+          POSTGRES_PASSWORD: ci-system-${{ github.run_id }}
+          POSTGRES_DB: events_test
+          POSTGRES_PORT: '15434'
+          EVENT_PRODUCER_KEY: ci-producer-${{ github.run_id }}
+          EVENT_ANALYST_KEY: ci-analyst-${{ github.run_id }}
+        run: |
+          set -o pipefail
+          cargo build --locked --bin event-service
+          cargo run --locked --example verify_system 2>&1 | tee artifacts/recovery.txt
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: acceptance-reports
+          name: rust-postgres-evidence
           path: artifacts/
-          if-no-files-found: warn
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build non-root runtime image
+        run: docker build --tag event-service:ci .
+      - name: Verify embedded API contract
+        run: docker run --rm event-service:ci openapi > /dev/null

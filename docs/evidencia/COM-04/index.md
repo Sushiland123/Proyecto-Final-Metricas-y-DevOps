@@ -1,27 +1,18 @@
-# COM-04 — Evidencia de validación, manejo de errores y recuperación (Escenario 3)
+# COM-04 · Errores, validación y recuperación · Rust
 
-**Criterios:** Entradas inválidas reciben `422`, conflictos de duplicidad reciben `409`, recursos inexistentes reciben `404`, dependencias caídas reciben `503`, y el sistema recupera la operatividad sin reiniciar la aplicación. Respuestas y logs sanitizados con `request_id`. Véase [issue #4](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/4).
-
-## 1. Pruebas automatizadas de validación y errores
+[Issue #4](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/4). Criterio: 422/409/404/503 seguros, Request-ID y recuperación sin recrear API.
 
 ```bash
-uv sync --locked
-uv run --locked pytest tests/test_errors.py
+cargo test --locked --test domain --test http --test service
+# Contra contenedor dedicado y configuración del README:
+cargo build --locked --bin event-service
+cargo run --locked --example verify_system
 ```
 
-- Validación en el borde con Pydantic v2: tipos, límites de longitud, formato RFC3339 con zona horaria, tamaño de payload (16 KiB máx) y descarte de campos extra (`extra="forbid"`).
-- Respuestas públicas uniformes sin filtración de trazas, contraseñas ni DSNs.
-- Validación de parámetros de lote (`EventBatchCreate`) y consultas analíticas (`EventsListQuery`, `TimeseriesQuery`, `SummaryQuery`).
+Pruebas verifican identificadores, fechas con zona, tamaños UTF-8 exactos, lotes y ventanas; HTTP comprueba mensajes fijos, ausencia del valor recibido, IDs inválidos/duplicados, JSON roto y routing. `service` comprueba recuperación con doble de repositorio; no sustituye el experimento real de DB.
 
-## 2. Experimento real de caída y recuperación (200 → 503 → 200)
+El experimento real detiene su DB, verifica 503 en datos y 200 en liveness, reinicia DB y obtiene 200 conservando PID API. Resultado y logs se producen en `rust-postgres-evidence` al ejecutarlo; no se reutilizan demostraciones históricas. [Diseño y límites](../../arquitectura/errores.md): timeouts por operación, no deadline HTTP global.
 
-Siguiendo el procedimiento documentado en [docs/arquitectura/errores.md](../../arquitectura/errores.md):
+Ejecución local Rust del 2026-11-07 con Podman/PostgreSQL 16: `PASS: 200 -> 503 -> 200 without restarting API`. El mismo experimento verificó supervivencia al reinicio completo; [resultado COM-03](../COM-03/index.md). CI debe repetirlo sobre el commit del PR.
 
-```text
-status=200 request_id=before-1 code=OK
-status=503 request_id=down-1 code=DEPENDENCY_UNAVAILABLE
-status=200 request_id=after-1 code=OK
-PASS: PostgreSQL recovered without restarting API
-```
-
-La recuperación se produce sobre el mismo PID del proceso gracias a `pool_pre_ping=True`, timeouts acotados y reintentos automáticos con backoff en lecturas operacionales.
+Se ejecutó además la variante del experimento que inyecta marcadores sensibles en payload/URL y compara logs reales: `PASS: failure responses and API logs do not disclose submitted secrets or URL values`.

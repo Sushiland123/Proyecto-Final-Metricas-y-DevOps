@@ -1,17 +1,13 @@
-# COM-02 — Evidencia de arquitectura y límites de componentes (Escenario 3)
+# COM-02 · Límites y arquitectura · Rust
 
-**Requisito:** [Issue #2](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/2). Definición y justificación de límites, responsabilidades de componentes, decisiones técnicas (ADR) y diagramas de arquitectura reales.
+[Issue #2](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/2). Criterio: responsabilidades y decisiones verificables en código.
 
-## 1. Verificación del diseño arquitectónico
+- [Contexto](../../arquitectura/contexto.md), [módulos](../../arquitectura/contenedores.md), [despliegue](../../arquitectura/despliegue.md).
+- ADRs [0001](../../adr/0001-descomposicion.md), [0002](../../adr/0002-almacenamiento.md), [0003](../../adr/0003-comunicacion.md), [0004 Rust](../../adr/0004-rust.md).
+- `src/service.rs` depende del puerto `src/repository.rs`; `src/postgres.rs` implementa SQLx. `src/main.rs` construye e inyecta dependencias. `tests/service.rs` verifica autorización sin tocar el repositorio.
 
-| Comprobación | Procedimiento de verificación | Resultado |
-|---|---|---|
-| **Arquitectura de componentes y módulos** | Inspección de `src/event_service/` (`api`, `schemas`, `auth`, `service`, `storage`, `contracts`, `errors`, `config`, `main`) y ejecución de pruebas unitarias y de integración. | Capas desacopladas; separación nítida entre HTTP, dominio y persistencia. Pruebas ejecutan con y sin base de datos real. |
-| **Diagramas de arquitectura como código** | Diagramas Mermaid actualizados en [contexto](../../arquitectura/contexto.md), [contenedores](../../arquitectura/contenedores.md) y [despliegue](../../arquitectura/despliegue.md). | Diagramas validados conforme a la especificación del Escenario 3 (ingesta individual/batch, consultas y analítica). |
-| **Registro de decisiones arquitectónicas (ADR)** | Consulta de [ADR-0001](../../adr/0001-descomposicion.md) (descomposición modular), [ADR-0002](../../adr/0002-almacenamiento.md) (PostgreSQL relacional) y [ADR-0003](../../adr/0003-comunicacion.md) (REST/SQL síncrono). | Cada decisión contiene contexto, justificación de elección, alternativas descartadas y consecuencias técnicas. |
+Reproducir: `cargo test --locked --test service`, `cargo doc --locked --no-deps`. Inspeccionar diagramas Mermaid contra módulos reales. La existencia del Dockerfile no acredita despliegue Azure/K3s ni revisión independiente; esos requisitos permanecen pendientes. Documentación exportada en artefacto CI `rust-api-and-code-docs`.
 
-## 2. Contraste de límites y contratos
+## Verificación local del contenedor · 2026-11-07
 
-- `event_service` es el único dueño lógico de las reglas del Escenario 3.
-- `PostgreSQL 16` es el custodio físico de los datos con restricción única e índices compuestos.
-- Los contratos y esquemas neutrales desacoplan los controladores HTTP del motor relacional.
+Se construyó el Dockerfile final con Podman: imagen `localhost/pfmdo-rust-review:latest`, ID `f329f5b235d988764cfaa8b8daff1706c205fa43390b7e24ef80688ad24c44ba`, tamaño local 93,962,548 bytes y usuario `10001:10001`. Se ejecutó el binario release del contenedor: exportó OpenAPI válido, atendió liveness con 200 y readiness con 503 sin DB, incluyendo error seguro y Request-ID. Es una prueba local, no publicación de imagen ni despliegue cloud.

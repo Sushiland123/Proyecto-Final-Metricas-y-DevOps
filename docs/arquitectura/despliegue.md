@@ -1,32 +1,19 @@
-# Despliegue — local verificado; Azure/K3s pendiente (COM-02)
-
-Esta vista describe **solo el entorno local realmente ejecutado** para las pruebas COM-01…05: proceso Python en el host y PostgreSQL 16 en Compose con volumen nombrado. No se ha construido imagen, aprovisionado Azure ni desplegado K3s/registro. No presentar el diagrama local como un clúster.
+# Despliegue local Rust; Azure/K3s pendiente · COM-02
 
 ```mermaid
 flowchart LR
-    client["Cliente local / curl / pruebas"] -->|"HTTP 127.0.0.1:8000"| app
-    subgraph host["Máquina local de pruebas"]
-        env["Entorno · DATABASE_URL y claves no versionadas"] --> app["uvicorn · event_service.main:app"]
-        subgraph compose["Compose · proyecto de pruebas"]
-            pg[("PostgreSQL 16 · events_test")]
-            volume[("Volumen nombrado · postgres_data")]
-            pg --- volume
-        end
-        app -->|"TCP/SQL psycopg · 127.0.0.1:5432"| pg
+    client["curl / clientes"] -->|"HTTP 127.0.0.1:8000"| api
+    subgraph local["Máquina local"]
+        env["Variables de entorno no versionadas"] --> api["event-service · Rust nativo o imagen no-root"]
+        api -->|"TCP PostgreSQL / SQLx"| pg[("PostgreSQL 16 · Compose")]
+        pg --- volume[("postgres_data · volumen nombrado")]
     end
 ```
 
-**Reproducción:** desde checkout limpio, seguir [arranque local](../../README.md#mvp-local-de-ingesta-y-análisis-de-eventos), aplicar Alembic, iniciar API y ejecutar `uv run --locked pytest`. La prueba `scripts/verify_durability.py` escribe por API, reinicia API y PostgreSQL conservando el volumen, vuelve a migrar y lee el mismo evento; las instrucciones de [recuperación](errores.md) detienen/reinician PostgreSQL y verifican `200 → 503 → 200` con **el mismo proceso API**. El volumen local prueba supervivencia ante reinicio, no ante pérdida de VM. Configurar puertos según `POSTGRES_PORT` (el dibujo usa el valor por defecto) y jamás publicar claves.
+Seguir el [README](../../README.md#arranque-local). Para binario nativo: `cargo run --locked -- migrate`, luego `cargo run --locked -- serve`. Para contenedor: perfil `app` de Compose; migraciones como proceso independiente antes de iniciar el servicio. El runtime escucha `0.0.0.0:8000`, usuario 10001 sin root, certificados CA instalados, sin toolchain ni código fuente.
 
-**Contraste pendiente del issue #2:** cuando DEV-02/06/09 entreguen imágenes, registro, Azure y manifiestos, inventariar configuración declarada y observada (`kubectl get deploy,sts,svc,ingress,pvc,pods -A -o wide`, digests y recursos Azure). Trazar `elemento del diagrama ↔ manifiesto ↔ recurso observado`; entonces reemplazar o extender esta vista con el despliegue real. Aún no existe tal evidencia ni revisión independiente.
+`DATABASE_URL` del host usa el puerto publicado; dentro de Compose usa `postgres:5432`. La API escucha solo en loopback por defecto fuera de contenedores. No publicar PostgreSQL a Internet. Terminar TLS y aplicar rate limiting en el proxy/ingress.
 
-**Render reproducible:** los tres Markdown usan bloques `mermaid` renderizables en GitHub. Para volver a verificar sintaxis con Mermaid CLI 11.12.0 y Chromium desde la raíz del checkout (crear el directorio de salida antes):
+`examples/verify_system.rs` crea un contenedor de prueba propio y conserva su volumen: prueba recuperación sin reinicio de API y supervivencia a reinicios completos. El volumen demuestra durabilidad ante reinicios, **no** frente a pérdida de disco o VM. Ver [persistencia](persistencia.md).
 
-```bash
-mkdir -p /tmp/opencode
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium PUPPETEER_SKIP_DOWNLOAD=1 npx --yes --package=@mermaid-js/mermaid-cli@11.12.0 mmdc -i docs/arquitectura/contexto.md -o /tmp/opencode/COM-02-contexto-render.md
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium PUPPETEER_SKIP_DOWNLOAD=1 npx --yes --package=@mermaid-js/mermaid-cli@11.12.0 mmdc -i docs/arquitectura/contenedores.md -o /tmp/opencode/COM-02-contenedores-render.md
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium PUPPETEER_SKIP_DOWNLOAD=1 npx --yes --package=@mermaid-js/mermaid-cli@11.12.0 mmdc -i docs/arquitectura/despliegue.md -o /tmp/opencode/COM-02-despliegue-render.md
-```
-
-Render correcto acredita sintaxis, **no** correspondencia con Azure/K3s. Ver [contexto](contexto.md), [módulos](contenedores.md) y [ADRs](../adr/0001-descomposicion.md).
+El workflow compila y prueba Rust y el Dockerfile. Azure, registro de imágenes, Terraform, K3s, requests/limits y despliegues con aprobación requieren sus issues DEV correspondientes. Este diagrama no acredita recursos cloud ni revisión independiente. Cuando existan: documentar manifiesto ↔ recurso observado, digests, probes y PVC; conservar evidencia del despliegue real.

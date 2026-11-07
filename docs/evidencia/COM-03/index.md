@@ -1,34 +1,24 @@
-# COM-03 — Evidencia de persistencia y durabilidad (Escenario 3)
+# COM-03 · Persistencia y durabilidad · Rust
 
-**Criterio:** La información persistida por el Escenario 3 sobrevive al reinicio de los procesos de la aplicación y del contenedor/pod de base de datos. Las migraciones están versionadas y son idempotentes. Véase [issue #3](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/3).
-
-## 1. Procedimiento de prueba y verificación
-
-Con PostgreSQL 16 y volumen nombrado persistente:
+[Issue #3](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/3). Criterio: datos confirmados sobreviven a reinicios conservando volumen.
 
 ```bash
-uv sync --locked
-uv run --locked alembic upgrade head
-uv run --locked pytest tests/test_persistence.py
+cargo test --locked --test postgres -- --ignored --nocapture
+cargo build --locked --bin event-service
+cargo run --locked --example verify_system
 ```
 
-## 2. Experimento real de reinicio de componentes
+Configurar entorno dedicado según [README](../../../README.md). Integración `data_survives_new_pool_and_repeated_migrations` compara documento desde otro pool y comprueba versiones/índices: aprobada localmente en la migración Rust. El experimento de procesos crea contenedor propio, conserva volumen y compara evento completo tras reiniciar API y PostgreSQL; genera su evidencia al ejecutarse, sin reutilizar UUIDs/resultados de la versión anterior.
 
-Ejecutando el script de durabilidad `scripts/verify_durability.py`:
-1. Crea un evento por API contra PostgreSQL.
-2. Detiene el proceso de API.
-3. Detiene el contenedor PostgreSQL (`docker compose stop postgres`), reteniendo el volumen nombrado.
-4. Reinicia PostgreSQL y reaplica las migraciones de Alembic dos veces consecutivas.
-5. Inicia un proceso nuevo de API.
-6. Lee el evento por UUID y ejecuta una consulta agregada `GET /v1/analysis/summary`.
+Esquema: `migrations/2026102101_events.sql`, `2026110202_source_time_index.sql`; control SQLx `_sqlx_migrations`. [Guía de adopción de esquema existente](../../arquitectura/persistencia.md). Artefactos CI: `rust-postgres-evidence` con logs de tests/experimento. Límite: no prueba pérdida de disco/VM, backup restore ni HA.
 
-**Resultado obtenido:**
+## Ejecución local Rust · 2026-11-07
+
+Experimento ejecutado con PostgreSQL 16 y Podman:
+
 ```text
-PASS: event a8e98163-4488-4e3f-afc1-a6a181b81163 persisted after API + PostgreSQL restart
+PASS: 200 -> 503 -> 200 without restarting API
+PASS: event 0321b118-71c8-4a9b-8b09-44b728b30715 persisted after API + PostgreSQL restart
 ```
 
-## 3. Versionamiento de esquema
-
-- Migración `20261021_01_create_events.py`: Creación de la tabla `events`, clave primaria UUID, restricción única `uq_events_source_external_id` e índice `ix_events_occurred_at_type`.
-- Migración `20261102_02_add_source_time_index.py`: Adición del índice compuesto `ix_events_occurred_at_source` para optimizar consultas del Escenario 3.
-- Idempotencia verificada en `test_data_survives_new_engine_and_repeated_upgrade`.
+Se retuvo el volumen del experimento para inspección. Es una ejecución local, no un workflow GitHub ni un despliegue Azure.
