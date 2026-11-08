@@ -8,11 +8,11 @@ Precios de referencia de pago por uso en `westus`, Linux, en USD. Son **aproxima
 
 | Recurso | Supuesto | Costo estimado |
 |---|---|---|
-| VM `Standard_B2as_v2` (2 vCPU, 8 GB) | ≈ US$0.075/h encendida | ≈ US$0.90/día con 12 h encendida al día; ≈ US$1.80/día si queda encendida 24 h |
+| VM `Standard_B2s_v2` (2 vCPU, 8 GB) | ≈ US$0.083/h encendida | ≈ US$1.00/día con 12 h encendida al día; ≈ US$2.00/día si queda encendida 24 h |
 | Disco del sistema StandardSSD 64 GB (E6) | Se cobra aunque la VM esté apagada | ≈ US$0.16/día |
 | IP pública Standard estática | Se cobra aunque la VM esté desasignada | ≈ US$0.12/día |
 | Storage del state y tráfico | Pocos MB | < US$0.01/día |
-| **Total con 12 h/día encendida** | | **≈ US$1.20/día → ≈ US$25 en 3 semanas** |
+| **Total con 12 h/día encendida** | | **≈ US$1.30/día → ≈ US$27 en 3 semanas** |
 
 El margen restante cubre picos de uso (pruebas de carga, defensa) y cargos que no son de este proyecto. Una VM de 4 GB (`Standard_B2als_v2`) reduciría el cómputo a la mitad, pero quedaría al límite de memoria.
 

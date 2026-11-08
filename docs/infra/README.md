@@ -18,7 +18,7 @@ flowchart LR
     subgraph rg["rg-eventos-&lt;sufijo&gt; · westus"]
         pip["IP pública estática<br/>eventos-&lt;sufijo&gt;.westus.cloudapp.azure.com"]
         nsg["NSG: 80/443 Internet · 22 solo admin · 6443 denegado"]
-        vm["VM Ubuntu 24.04 · Standard_B2as_v2<br/>K3s v1.35.2+k3s1 (cloud-init)<br/>apagado automático 23:00"]
+        vm["VM Ubuntu 24.04 · Standard_B2s_v2<br/>K3s v1.35.2+k3s1 (cloud-init)<br/>apagado automático 23:00"]
         pip --- vm
         nsg --- vm
     end
@@ -37,14 +37,14 @@ flowchart LR
 | VNet / subred | `vnet-eventos-<sufijo>` · `snet-k3s` (10.40.1.0/24) | Red privada de la VM |
 | NSG | `nsg-eventos-<sufijo>-k3s` | 80/443 desde Internet, 22 solo desde `admin_cidrs`, 6443 denegado |
 | IP pública | `pip-eventos-<sufijo>-k3s` | Estática, Standard, con etiqueta DNS `eventos-<sufijo>` |
-| VM | `vm-eventos-<sufijo>-k3s` | Ubuntu 24.04, `Standard_B2as_v2` (2 vCPU, 8 GB), disco StandardSSD de 64 GB |
+| VM | `vm-eventos-<sufijo>-k3s` | Ubuntu 24.04, `Standard_B2s_v2` (2 vCPU, 8 GB), disco StandardSSD de 64 GB |
 | Apagado automático | `shutdown-computevm-vm-eventos-<sufijo>-k3s` | Desasigna la VM todos los días a las 23:00 (hora de Centroamérica) |
 | Presupuesto | `budget-eventos-<sufijo>` | US$100 mensuales a nivel de suscripción; alertas al 50 % y 80 % reales y al 100 % pronosticado |
 
 ### Decisiones
 
 - **Región `westus`.** La política de la suscripción permite `westus`, `northcentralus`, `westus3`, `mexicocentral` y `canadacentral`. En `mexicocentral` los tamaños burstable no están disponibles para Azure for Students (`NotAvailableForSubscription`); `westus` ofrece la serie B sin restricciones.
-- **`Standard_B2as_v2` (2 vCPU, 8 GB).** El nodo aloja K3s, la API en dos namespaces, PostgreSQL y la observabilidad (Prometheus, Grafana, OpenTelemetry Collector, visor de trazas). Con 4 GB la memoria quedaría al límite; el tamaño se revisará con el consumo observado y los requests de DEV-11.
+- **`Standard_B2s_v2` (2 vCPU, 8 GB).** El primer intento con `Standard_B2as_v2` falló por falta de capacidad temporal de Azure en `westus` (`SkuNotAvailable`, *Capacity Restrictions*); `vm_size` es una variable para cambiar de tamaño si vuelve a ocurrir. El nodo aloja K3s, la API en dos namespaces, PostgreSQL y la observabilidad (Prometheus, Grafana, OpenTelemetry Collector, visor de trazas). Con 4 GB la memoria quedaría al límite; el tamaño se revisará con el consumo observado y los requests de DEV-11.
 - **Un nodo, sin HA.** El proyecto no exige alta disponibilidad ni tolerancia a la pérdida de la VM. Un reinicio de Pod no equivale a perder la VM.
 - **K3s por cloud-init.** Versión fija `v1.35.2+k3s1`, la misma que se usó en clase. Cambiar la versión o el template **reemplaza la VM** (y los volúmenes `local-path`); el plan lo muestra antes de aplicar.
 - **API de Kubernetes cerrada.** El puerto 6443 no se publica. La administración se hace por SSH con clave (sin contraseña) y un túnel: `ssh -N -L 6443:127.0.0.1:6443 azureuser@<fqdn>`.

@@ -22,7 +22,7 @@ variable "name_suffix" {
 variable "vm_size" {
   description = "Tamaño de la VM que aloja K3s, la aplicación, PostgreSQL y la observabilidad."
   type        = string
-  default     = "Standard_B2as_v2"
+  default     = "Standard_B2s_v2"
 }
 
 variable "os_disk_size_gb" {
