@@ -33,16 +33,21 @@ id-eventos-plan   Reader                         /subscriptions/<sub>
 id-eventos-plan   Storage Blob Data Contributor  .../storageAccounts/sttfeventosb97e31
 id-eventos-apply  Contributor                    /subscriptions/<sub>
 id-eventos-apply  Storage Blob Data Contributor  .../storageAccounts/sttfeventosb97e31
+id-eventos-ops    eventos-b97e31-vm-operator     /subscriptions/<sub>
 ```
 
 Ninguna identidad tiene secretos: GitHub Actions obtiene tokens por OIDC con credenciales federadas.
 
+`az identity federated-credential list`, después del bootstrap del 2026-11-08:
+
 ```text
-repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:pull_request              (id-eventos-plan)
-repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:environment:azure-infra   (id-eventos-apply)
+id-eventos-plan   repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:pull_request
+id-eventos-plan   repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:environment:azure-ops      (drift programado)
+id-eventos-apply  repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:environment:azure-infra
+id-eventos-ops    repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:environment:azure-ops      (energía de la VM)
 ```
 
-Las credenciales también existen con el formato de IDs inmutables. El bootstrap actualizado agrega `environment:azure-ops`, para `id-eventos-ops` (energía de la VM) y para `id-eventos-plan` (drift programado). Esta evidencia se completará con la salida de `az identity federated-credential list` cuando se ejecute.
+Cada subject existe también con el formato de IDs inmutables (`repo:marchelo23@<id>/Proyecto-Final-Metricas-y-DevOps@<id>:…`).
 
 **Bloqueo.** Cada `plan` y `apply` muestra `Acquiring state lock` y toma un lease del blob. Un plan cortado por la red dejó el lease tomado: el siguiente plan falló con `state blob is already locked`, que es el comportamiento esperado ante una ejecución concurrente. Se confirmó que no había otra ejecución en curso (sin procesos locales; CI sin configurar) y se liberó con `az storage blob lease break`, sin usar `-lock=false`.
 

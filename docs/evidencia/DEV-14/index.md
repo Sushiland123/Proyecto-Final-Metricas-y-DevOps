@@ -41,13 +41,21 @@ location = mexicocentral → LocationNotAvailableForResourceType
 location = westus3       → InvalidScheduleLocation: The schedule should be created in location mexicocentral.
 ```
 
-Se reemplazó por [`vm-power.yml`](../../../.github/workflows/vm-power.yml), que desasigna la VM a las 23:00 y permite `start`, `stop` y `status` manuales desde GitHub. Usa `id-eventos-ops`, con un rol personalizado limitado a cuatro acciones (`virtualMachines/read`, `instanceView/read`, `start/action`, `deallocate/action`). Los nombres de las acciones se validaron contra `az provider operation show`.
+Se reemplazó por [`vm-power.yml`](../../../.github/workflows/vm-power.yml), que desasigna la VM a las 23:00 y permite `start`, `stop` y `status` manuales desde GitHub. Usa `id-eventos-ops`, con un rol personalizado limitado a cuatro acciones (`virtualMachines/read`, `instanceView/read`, `start/action`, `deallocate/action`). Los nombres de las acciones se validaron contra `az provider operation show`. El bootstrap del 2026-11-08 creó la identidad y el rol (`az role definition list --name eventos-b97e31-vm-operator`):
+
+```text
+nombre:   eventos-b97e31-vm-operator
+acciones: Microsoft.Compute/virtualMachines/read, Microsoft.Compute/virtualMachines/instanceView/read,
+          Microsoft.Compute/virtualMachines/start/action, Microsoft.Compute/virtualMachines/deallocate/action
+alcance:  /subscriptions/<sub>   (asignado a id-eventos-ops)
+```
 
 **Eliminación probada.** El cambio de región destruyó por Terraform todos los recursos regionales anteriores, sin recursos huérfanos: el grupo antiguo se eliminó completo.
 
 ## Pendiente
 
-- [ ] Ejecutar el bootstrap actualizado, que crea `id-eventos-ops` y su rol, y configurar el environment `azure-ops`.
+- [x] Ejecutar el bootstrap actualizado, que crea `id-eventos-ops` y su rol (2026-11-08).
+- [ ] Configurar el environment `azure-ops` y la variable `OPS_CLIENT_ID` (administrador del repositorio).
 - [ ] Enlazar la primera ejecución programada de `vm-power.yml` (`VM deallocated`).
 - [ ] Registrar cada semana, y antes de cada entrega y de la defensa, el acumulado del mes, el acumulado del proyecto, el crédito restante y el saldo hasta US$100 (tabla de `costos.md`). El presupuesto mensual no cubre el agregado de varios meses.
 
