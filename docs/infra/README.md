@@ -152,6 +152,8 @@ Procedimiento completo en [`infra/ssh/README.md`](../../infra/ssh/README.md).
 
 Dentro de la VM se usa `sudo k3s kubectl`, como en la clase. Para `kubectl` local, `SSH_KEY=~/.ssh/<clave> bash infra/scripts/kube-access.sh` y el túnel que indica. La API 6443 sigue cerrada a Internet.
 
+`kube-access.sh` lee el FQDN con `terraform output`, lo que exige el backend inicializado y acceso al state en Azure. Un integrante sin rol en Azure pasa el nombre directamente: `FQDN=eventos-<sufijo>.mexicocentral.cloudapp.azure.com SSH_KEY=~/.ssh/<clave> bash infra/scripts/kube-access.sh`. Para quitar un acceso, ver [*Quitar el acceso*](../../infra/ssh/README.md#quitar-el-acceso): el apply no corta sesiones abiertas ni invalida un kubeconfig copiado.
+
 ## Reconstrucción desde cero · DEV-13
 
 Prerrequisitos: Azure CLI con sesión de un **Owner** de la suscripción (`az login`), GitHub CLI (`gh auth login`), Terraform ≥ 1.12, Git Bash o Linux, `openssl` y un par de claves SSH. En Windows con Git Bash, los scripts ya exportan `MSYS_NO_PATHCONV=1`.
