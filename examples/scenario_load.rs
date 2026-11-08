@@ -14,6 +14,7 @@ struct Attempt {
     latency_ms: f64,
     lag_ms: f64,
 }
+/// Submit one scheduled attempt and preserve uncertain outcomes without logging credentials.
 async fn send(
     client: Client,
     base: String,
@@ -47,6 +48,7 @@ async fn send(
         },
     }
 }
+/// Generate deterministic fictitious measurements and UTC timestamps for a numbered event.
 fn payload(device: &str, n: usize, seed: u64) -> Value {
     // Fixed integer mixing, independent of platform RNG; same seed => same measurements.
     let value = (n as u64)
@@ -56,6 +58,7 @@ fn payload(device: &str, n: usize, seed: u64) -> Value {
         "occurred_at":(Utc.with_ymd_and_hms(2040,1,1,0,0,0).single().unwrap_or_default()+chrono::Duration::seconds(n as i64)).to_rfc3339(),
         "temperature":10.0+(value%400) as f64/10.0,"humidity":30.0+(value%600) as f64/10.0,"state":"running"})
 }
+/// Compute an observed order-statistic percentile, returning zero for an empty population.
 fn percentile(values: &mut [f64], p: f64) -> f64 {
     values.sort_by(f64::total_cmp);
     values
@@ -64,6 +67,7 @@ fn percentile(values: &mut [f64], p: f64) -> f64 {
         .unwrap_or(0.0)
 }
 #[tokio::main]
+/// Run a bounded reproducible profile, verify accepted UUIDs and print a safe JSON report.
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let profile = args.first().map(String::as_str).unwrap_or("burst");

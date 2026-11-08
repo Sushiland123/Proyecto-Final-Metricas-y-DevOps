@@ -26,6 +26,8 @@ use uuid::Uuid;
 pub struct AppState {
     pub settings: Arc<Settings>,
     pub service: EventService,
+    /// ESC3 shares the service's pool, including the connection tested by readiness.
+    pub scenario: Option<crate::scenario::store::Store>,
 }
 
 impl FromRequestParts<AppState> for Principal {
@@ -43,7 +45,7 @@ impl FromRequestParts<AppState> for Principal {
 
 /// The outer correlation layer also normalizes extraction, routing and panic errors.
 pub fn router(state: AppState) -> Router {
-    let scenario = crate::scenario::http::router(state.settings.clone());
+    let scenario = crate::scenario::http::router(state.settings.clone(), state.scenario.clone());
     Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))

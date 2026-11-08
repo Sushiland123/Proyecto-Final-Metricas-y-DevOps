@@ -14,17 +14,20 @@ use std::{
 };
 use tower::ServiceExt;
 
+/// Create a fictitious reading with deterministic measurements and generation time.
 fn reading(device: &str, n: usize) -> Value {
     json!({"device_id":device,"event_id":format!("event-{n}"),
         "occurred_at":(Utc.with_ymd_and_hms(2040,1,1,12,0,0).unwrap()+chrono::Duration::seconds(n as i64)).to_rfc3339(),
         "temperature":20.0+(n%30) as f64,"humidity":40.0,"state":"running"})
 }
+/// Select the half-open interval containing only this test's generated fixture timestamps.
 fn period() -> Period {
     serde_json::from_value(
         json!({"from":"2040-01-01T12:00:00Z","to":"2040-01-01T13:00:00Z","limit":1000}),
     )
     .unwrap()
 }
+/// Start a real, separately stoppable processor against the dedicated integration database.
 fn worker(db: &Database, mode: &str) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_event-service"))
         .arg(mode)
@@ -39,6 +42,47 @@ fn worker(db: &Database, mode: &str) -> std::process::Child {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Closing the shared pool makes readiness and ESC3 fail together, while liveness remains up.
+async fn shared_pool_aligns_readiness_with_scenario_routes() {
+    let db = Database::new().await;
+    let repository = db.repository();
+    let pool = repository.pool().unwrap().clone();
+    let app = event_service::api::router(event_service::api::AppState {
+        settings: std::sync::Arc::new(db.settings.clone()),
+        service: event_service::service::EventService::new(std::sync::Arc::new(repository)),
+        scenario: Some(Store { pool: pool.clone() }),
+    });
+    assert_eq!(
+        request(&app, "GET", "/health/ready", None, None).await.0,
+        200
+    );
+    assert_eq!(
+        request(&app, "GET", "/v1/devices", Some("test-analyst"), None)
+            .await
+            .0,
+        200
+    );
+    pool.close().await;
+    assert_eq!(
+        request(&app, "GET", "/health/ready", None, None).await.0,
+        503
+    );
+    assert_eq!(
+        request(&app, "GET", "/v1/devices", Some("test-analyst"), None)
+            .await
+            .0,
+        503
+    );
+    assert_eq!(
+        request(&app, "GET", "/health/live", None, None).await.0,
+        200
+    );
+    db.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to dedicated PostgreSQL"]
+/// Verify official ESC3 acceptance, recovery, alerts and conservation with HTTP and real workers.
 async fn esc3_acceptance_1000_duplicates_late_rejections_and_worker_recovery() {
     let db = Database::new().await;
     let app = db.app();

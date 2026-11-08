@@ -5,6 +5,7 @@ use event_service::{
 };
 use serde_json::json;
 #[test]
+/// Distinguish wire requirements and physical validity from configurable business thresholds.
 fn physical_ranges_required_fields_and_alert_limits_are_distinct() {
     let value = json!({"device_id":"sensor-a","event_id":"e1","occurred_at":"2040-01-01T13:00:00+01:00","temperature":150,"humidity":100,"state":"fault"});
     let reading: ReadingCreate = serde_json::from_value(value.clone()).unwrap();

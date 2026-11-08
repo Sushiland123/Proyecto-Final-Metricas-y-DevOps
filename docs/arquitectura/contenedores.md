@@ -39,8 +39,9 @@ flowchart LR
 | `config.rs` | Configuración de inicio sin Debug/Serialize para secretos |
 | `scenario/` | Contrato ESC3, recepción durable, contadores, consultas y procesamiento transaccional con backlog |
 
-La API genérica y ESC3 usan pools acotados separados de hasta 10 conexiones cada uno;
-el procesador utiliza otro de hasta 10. Dimensionar PostgreSQL por **proceso y pool**,
-no asumir que toda la plataforma usa 10 conexiones. Se crean conexiones bajo demanda.
+La API genérica, ESC3 y readiness comparten un único pool de hasta 10 conexiones;
+el procesador independiente utiliza otro de hasta 10. Dimensionar PostgreSQL por
+**proceso y réplica**, no asumir que toda la plataforma usa 10 conexiones.
+Se crean conexiones bajo demanda.
 
 Contratos públicos en [API](../api.md); patrones y límites pragmáticos en [desarrollo](../desarrollo.md).

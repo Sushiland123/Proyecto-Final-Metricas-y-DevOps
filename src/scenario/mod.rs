@@ -20,6 +20,7 @@ pub struct Limits {
     pub humidity_max: f64,
 }
 impl Validate for Limits {
+    /// Keep finite, strictly increasing business limits inside the declared physical ranges.
     fn validate(&self) -> Result<(), Error> {
         if self.temperature_min.is_finite()
             && self.temperature_max.is_finite()
@@ -46,6 +47,7 @@ pub struct DeviceCreate {
     pub limits: Limits,
 }
 impl Validate for DeviceCreate {
+    /// Validate stable device/installation identifiers before accepting limit configuration.
     fn validate(&self) -> Result<(), Error> {
         if !identifier(&self.id) || !identifier(&self.facility_id) {
             return Err(Error::InvalidInput);
@@ -77,6 +79,7 @@ pub struct ReadingCreate {
     pub state: String,
 }
 impl Validate for ReadingCreate {
+    /// Enforce required identifier semantics, finite physical values and supported states.
     fn validate(&self) -> Result<(), Error> {
         if !identifier(&self.device_id)
             || self.event_id.is_empty()
@@ -122,10 +125,12 @@ pub struct Page {
     pub offset: i64,
     pub device_id: Option<String>,
 }
+/// Bound the default response page without limiting aggregate calculations.
 fn page_limit() -> i64 {
     100
 }
 impl Validate for Page {
+    /// Reject unbounded pages and malformed optional device filters.
     fn validate(&self) -> Result<(), Error> {
         if !(1..=1000).contains(&self.limit)
             || !(0..=100_000).contains(&self.offset)
@@ -148,6 +153,7 @@ pub struct Period {
     pub offset: i64,
 }
 impl Validate for Period {
+    /// Require a nonempty half-open generation interval and valid pagination bounds.
     fn validate(&self) -> Result<(), Error> {
         Window {
             from: self.from,

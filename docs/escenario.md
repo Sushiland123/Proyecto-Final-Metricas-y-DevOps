@@ -117,6 +117,9 @@ cargo run --locked -- process
 
 `PROCESSOR_BATCH_SIZE` = 100 (1–1000), `PROCESSOR_POLL_MS` = 100 (1–60000).
 El delay se aplica tras cada lote para permitir reducir capacidad de forma controlada.
+Ante indisponibilidad de DB, `process` registra solo una categoría pública segura y
+aplica backoff exponencial: base = máximo de poll/read-backoff y 100 ms, techo 60 s;
+una consulta exitosa reinicia el backoff. Errores no recuperables terminan el proceso.
 `process` espera nuevas entradas y reintenta ante DB no disponible. `drain` termina
 cuando no ve pendientes disponibles y falla si DB no está disponible. Para acreditar
 backlog cero ejecutar `drain` **sin otros workers ni entrada nueva**, y verificar counts.
@@ -178,6 +181,30 @@ usar comandos destructivos sobre recursos compartidos.
 
 Los reportes son evidencia funcional y de carga de A, **no sustituyen** SLIs/SLOs,
 Prometheus, dashboards, trazas ni el análisis de incidente de D.
+
+## Entrega de A a B, C y D
+
+La API específica y el procesador están listos para integración. Esto no acredita
+que la plataforma completa esté desplegada ni que se hayan satisfecho DEV/MET.
+
+- **B:** conservar el Terraform/estado remoto entregados y completar evidencia de
+  plan/apply autenticado desde Actions, apagado operativo y gasto acumulado. No
+  ejecutar un apply o reemplazo de VM solo para demostrar esta funcionalidad.
+- **C:** construir el mismo binario/imagen y desplegar `serve` y `process` por
+  separado; ejecutar `migrate` antes de habilitar tráfico. API y worker requieren
+  `DATABASE_URL`; API requiere además las claves configuradas. Proteger PostgreSQL
+  con persistencia fuera del ciclo de vida del Pod y separar configuración/datos
+  entre desarrollo y producción. El worker no ofrece HTTP: no copiarle las probes
+  HTTP de la API sin diseñar una comprobación apropiada.
+- **D:** instrumentar recepción/procesamiento y usar el ledger como fuente de
+  contadores consistentes. La relación durable `receipt.id → reading_id → alert`
+  sirve para correlación de dominio, **no sustituye** propagación/enlaces de spans
+  OpenTelemetry. Agregar SLIs/SLOs, señales, dashboards, alertas e incidente según
+  el Anexo II sin confundir alertas de negocio con alertas operativas.
+
+La aceptación de la parte A no cierra automáticamente los issues DEV/MET. Tras el
+despliegue integrado, repetir los perfiles de carga y el experimento de recuperación
+en condiciones de defensa, con cuentas y datos ficticios y sin destruir la VM.
 
 ## Matriz de cobertura
 

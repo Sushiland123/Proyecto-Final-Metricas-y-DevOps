@@ -3,7 +3,6 @@ use super::{store::Store, *};
 use crate::{
     auth::{self, Principal, Role},
     config::Settings,
-    postgres::PostgresRepository,
 };
 use axum::{
     Json, Router,
@@ -22,6 +21,7 @@ pub struct ScenarioState {
     store: Option<Store>,
 }
 impl ScenarioState {
+    /// Preserve liveness with missing DB configuration, returning a safe 503 for data access.
     fn store(&self) -> Result<&Store, Error> {
         self.store.as_ref().ok_or(Error::Unavailable)
     }
@@ -32,6 +32,7 @@ struct Identity(Principal);
 pub struct RecordedRejection;
 impl FromRequestParts<ScenarioState> for Identity {
     type Rejection = Error;
+    /// Authenticate exactly one API key using the same fail-closed rules as legacy routes.
     async fn from_request_parts(parts: &mut Parts, state: &ScenarioState) -> Result<Self, Error> {
         let mut keys = parts.headers.get_all("x-api-key").iter();
         let key = keys.next().and_then(|v| v.to_str().ok());
@@ -41,12 +42,8 @@ impl FromRequestParts<ScenarioState> for Identity {
         auth::authenticate(key, &state.settings).map(Self)
     }
 }
-pub fn router(settings: Arc<Settings>) -> Router {
-    let store = PostgresRepository::new(&settings)
-        .pool()
-        .ok()
-        .cloned()
-        .map(|pool| Store { pool });
+/// Build ESC3 routes using the optional store supplied by the composition root; never create a pool.
+pub fn router(settings: Arc<Settings>, store: Option<Store>) -> Router {
     Router::new()
         .route("/v1/devices", post(register).get(devices))
         .route("/v1/devices/{device}", get(device))
@@ -60,6 +57,7 @@ pub fn router(settings: Arc<Settings>) -> Router {
         .route("/v1/rejections", get(rejections))
         .with_state(ScenarioState { settings, store })
 }
+/// Reject malformed device path identifiers before repository access.
 fn valid_device(id: &str) -> Result<(), Error> {
     if identifier(id) {
         Ok(())
@@ -69,6 +67,7 @@ fn valid_device(id: &str) -> Result<(), Error> {
 }
 
 #[utoipa::path(post, path="/v1/devices", request_body=DeviceCreate, security(("api_key"=[])), responses((status=201, body=Device)))]
+/// Provision a stable device and limits with global producer privileges.
 async fn register(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -82,6 +81,7 @@ async fn register(
     ))
 }
 #[utoipa::path(get, path="/v1/devices", params(Page), security(("api_key"=[])), responses((status=200, body=Vec<Device>)))]
+/// Return a bounded analyst page of registered devices.
 async fn devices(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -92,6 +92,7 @@ async fn devices(
     Ok(Json(state.store()?.devices(&page).await?))
 }
 #[utoipa::path(get, path="/v1/devices/{device}", params(("device"=String,Path)), security(("api_key"=[])), responses((status=200,body=Device)))]
+/// Return one registered device without exposing configuration to producers.
 async fn device(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -102,6 +103,7 @@ async fn device(
     Ok(Json(state.store()?.device(&id).await?))
 }
 #[utoipa::path(put, path="/v1/devices/{device}/limits", params(("device"=String,Path)), request_body=Limits, security(("api_key"=[])), responses((status=200,body=Device)))]
+/// Change limits for future receptions without rewriting accepted readings.
 async fn limits(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -114,6 +116,7 @@ async fn limits(
     Ok(Json(state.store()?.limits(&id, &input).await?))
 }
 #[utoipa::path(post, path="/v1/readings", request_body=ReadingCreate, security(("api_key"=[])), responses((status=202,body=Receipt),(status=200,description="Duplicate; original reading_id, no new work",body=Receipt),(status=422,description="Durably recorded rejection",body=Receipt)))]
+/// Record an authorized bounded attempt durably before acknowledging acceptance or rejection.
 async fn receive(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -161,6 +164,7 @@ async fn receive(
     Ok(response)
 }
 #[utoipa::path(get, path="/v1/receipts/{id}", params(("id"=Uuid,Path)), security(("api_key"=[])), responses((status=200,description="Durable reception receipt")))]
+/// Let an analyst verify the durable receipt identified by a reception response.
 async fn receipt(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -171,6 +175,7 @@ async fn receipt(
     Ok(Json(state.store()?.receipt(id).await?))
 }
 #[utoipa::path(get, path="/v1/devices/{device}/readings", params(("device"=String,Path),Period), security(("api_key"=[])), responses((status=200,body=Vec<Reading>)))]
+/// Return accepted readings, including pending work, ordered by generation time and UUID.
 async fn readings(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -183,6 +188,7 @@ async fn readings(
     Ok(Json(state.store()?.readings(&id, &period).await?))
 }
 #[utoipa::path(get, path="/v1/devices/{device}/statistics", params(("device"=String,Path),Period), security(("api_key"=[])), responses((status=200,body=Aggregate)))]
+/// Aggregate only processed readings within the requested half-open generation interval.
 async fn aggregate(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -195,6 +201,7 @@ async fn aggregate(
     Ok(Json(state.store()?.aggregate(&id, &period).await?))
 }
 #[utoipa::path(get, path="/v1/devices/{device}/alerts", params(("device"=String,Path),Period), security(("api_key"=[])), responses((status=200,body=Vec<Alert>)))]
+/// Return persisted business alerts filtered by their reading's generation timestamp.
 async fn alerts(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -207,6 +214,7 @@ async fn alerts(
     Ok(Json(state.store()?.alerts(&id, &period).await?))
 }
 #[utoipa::path(get, path="/v1/reception/counts", params(Page), security(("api_key"=[])), responses((status=200,body=Counters)))]
+/// Read the durable reception/processing identities from one consistent SQL snapshot.
 async fn counters(
     State(state): State<ScenarioState>,
     Identity(who): Identity,
@@ -220,6 +228,7 @@ async fn counters(
     ))
 }
 #[utoipa::path(get, path="/v1/rejections", params(Page), security(("api_key"=[])), responses((status=200,description="Safe rejection ledger, paginated")))]
+/// Return safe rejection metadata without retaining submitted bodies or credentials.
 async fn rejections(
     State(state): State<ScenarioState>,
     Identity(who): Identity,

@@ -49,10 +49,26 @@ lectura procesada y una pendiente durante el reinicio, y luego se procesó la pe
 
 ## Pruebas ejecutables
 
-Resultado local final: **31 pruebas aprobadas** (20 sin DB y 11 PostgreSQL),
+Resultado de la entrega inicial: **31 pruebas aprobadas** (20 sin DB y 11 PostgreSQL),
 `cargo fmt --all -- --check`, Clippy con `-D warnings` y rustdoc con `-D warnings`
 sin errores. Resultados detallados en `artifacts/esc3-unit-local.txt` y
 `artifacts/esc3-postgres-local.txt`.
+
+### Correcciones de CodeRabbit
+
+Tras revisar las observaciones se aplicaron:
+
+- pool único de hasta 10 conexiones compartido por API genérica, ESC3 y readiness;
+- categoría pública segura de errores del worker, backoff exponencial acotado y
+  reinicio del backoff tras éxito, conservando el fallo inmediato de `drain`;
+- docstrings en contratos, handlers, almacenamiento, simulador y pruebas;
+- pruebas de backoff/reset y de fallo conjunto de readiness/ESC3 al cerrar el pool.
+
+Revalidación local: **34 pruebas aprobadas** (22 sin DB + 12 PostgreSQL), formato,
+Clippy y rustdoc estrictos sin errores. Resultados en
+`artifacts/esc3-review-unit-local.txt` y `artifacts/esc3-review-postgres-local.txt`.
+El CI y la revisión humana deben corresponder al commit de estas correcciones, no
+solo al verde de `beff889`.
 
 - `tests/scenario_domain.rs`: campos, rangos físicos, límites, formato de IDs y UTC.
 - `tests/scenario3/mod.rs` dentro del target `postgres`: 1,000 válidos, 50 duplicados,
