@@ -1,0 +1,21 @@
+#!/bin/bash
+# Escribe ~/.ssh/authorized_keys de ${admin_username} con la clave del
+# administrador y las del equipo (infra/ssh/*.pub). Lo ejecuta la extensión
+# CustomScript cada vez que cambia la lista. El reemplazo es atómico: si algo
+# falla, el archivo anterior queda intacto.
+set -euo pipefail
+dir=/home/${admin_username}/.ssh
+install -d -m 0700 -o ${admin_username} -g ${admin_username} "$dir"
+tmp="$(mktemp "$dir/authorized_keys.XXXXXX")"
+cat > "$tmp" <<'CLAVES'
+# administrador
+${admin_key}
+%{ for name, key in team_keys ~}
+# ${name}
+${key}
+%{ endfor ~}
+CLAVES
+chown ${admin_username}:${admin_username} "$tmp"
+chmod 0600 "$tmp"
+mv "$tmp" "$dir/authorized_keys"
+ssh-keygen -lf "$dir/authorized_keys"
