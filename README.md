@@ -99,7 +99,7 @@ docker compose --profile app run --rm api migrate
 docker compose --profile app up -d api
 ```
 
-Imagen multi-stage, usuario no root, puerto 8000 y migraciones SQL embebidas. No incluir secretos en la imagen. Compose usa la red interna para PostgreSQL. El mismo ejecutable admite `serve`, `process` y `drain`; el procesador debe ejecutarse por separado. **Infraestructura Azure/K3s y Terraform** incorporada en el [PR #40](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/pull/40): [guía](docs/infra/README.md). Publicación de imágenes y despliegue de aplicación siguen pendientes de C; observabilidad corresponde a D. El Dockerfile no acredita un despliegue en la nube.
+Imagen multi-stage sobre distroless, sin shell, con usuario no root, puerto 8000 y migraciones SQL embebidas. No incluir secretos en la imagen. Compose usa la red interna para PostgreSQL. El mismo ejecutable admite `serve`, `process` y `drain`; el procesador debe ejecutarse por separado. Verificación local: `bash scripts/verify-image.sh <imagen>` y `bash scripts/scan-secrets.sh` ([DEV-02](docs/evidencia/DEV-02/index.md)). **Infraestructura Azure/K3s y Terraform** incorporada en el [PR #40](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/pull/40): [guía](docs/infra/README.md). Publicación de imágenes y despliegue de aplicación siguen pendientes de C; observabilidad corresponde a D. El Dockerfile no acredita un despliegue en la nube.
 
 ## Configuración
 

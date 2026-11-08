@@ -1,8 +1,17 @@
 .git
+.github
 .env
 .env.*
 target
 .venv
 .pytest_cache
 artifacts
+infra
+kubeconfig
+*kubeconfig*
+*.pem
+*.key
+*.tfvars
+*.tfstate
+*.tfstate.*
 **/__pycache__

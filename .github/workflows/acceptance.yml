@@ -85,12 +85,40 @@ jobs:
           name: rust-postgres-evidence
           path: artifacts/
 
-  container:
+  secrets:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan full Git history for secrets
+        run: bash scripts/scan-secrets.sh
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
       - name: Build non-root runtime image
-        run: docker build --tag event-service:ci .
-      - name: Verify embedded API contract
-        run: docker run --rm event-service:ci openapi > /dev/null
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: event-service:ci
+          build-args: |
+            VERSION=ci
+            REVISION=${{ github.event.pull_request.head.sha || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify hardening, vulnerabilities and SBOM
+        run: bash scripts/verify-image.sh event-service:ci
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-security-evidence
+          path: artifacts/image/
