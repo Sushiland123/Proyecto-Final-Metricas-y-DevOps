@@ -1,0 +1,6 @@
+# Scripts y plantillas que se ejecutan en Linux (VM y runners): siempre LF,
+# también en un clon de Windows con core.autocrlf=true.
+*.sh    text eol=lf
+*.tftpl text eol=lf
+*.tf    text eol=lf
+*.hcl   text eol=lf

@@ -1,0 +1,79 @@
+name: Drift de Terraform
+
+# Detecta cambios hechos fuera de Terraform (DEV-08). Ejecuta un plan diario de
+# solo lectura con la identidad id-eventos-plan y nunca aplica. Si hay
+# diferencias, el job falla y GitHub notifica al equipo: la corrección se hace con
+# un PR o un apply aprobado, no a mano en Azure.
+on:
+  schedule:
+    - cron: '0 14 * * *' # 08:00 en El Salvador
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-drift
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: '1.16.6'
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+
+jobs:
+  drift:
+    name: plan de drift
+    # Sin PLAN_CLIENT_ID (repositorio aún no configurado) el job no corre.
+    if: vars.PLAN_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    # Environment limitado a main; la identidad de plan tiene una credencial
+    # federada para este subject.
+    environment: azure-ops
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infra/terraform
+    env:
+      ARM_CLIENT_ID: ${{ vars.PLAN_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_USE_CLI: 'false'
+      TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_name_suffix: ${{ vars.INFRA_NAME_SUFFIX }}
+      TF_VAR_admin_ssh_public_key: ${{ vars.INFRA_ADMIN_SSH_PUBLIC_KEY }}
+      TF_VAR_admin_cidrs: ${{ secrets.INFRA_ADMIN_CIDRS }}
+      TF_VAR_budget_contact_emails: ${{ secrets.INFRA_BUDGET_CONTACT_EMAILS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: terraform plan -detailed-exitcode
+        run: |
+          set +e
+          terraform plan -lock-timeout=5m -no-color -detailed-exitcode > plan.txt 2>&1
+          code=$?
+          set -e
+          cat plan.txt
+          {
+            echo '### Drift de infraestructura'
+            grep -E '^(Plan:|No changes\.)' plan.txt || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$code" in
+            0) echo "Sin drift: Azure coincide con el código." ;;
+            2) echo "::error::Azure difiere del código. Revisar el plan y reconciliar con un PR o un apply aprobado."; exit 1 ;;
+            *) echo "::error::terraform plan falló (código $code)."; exit "$code" ;;
+          esac
