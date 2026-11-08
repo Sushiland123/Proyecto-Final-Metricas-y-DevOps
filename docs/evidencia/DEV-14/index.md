@@ -74,13 +74,23 @@ La plataforma del proyecto (`rg-eventos-*`) suma US$0.17. El resto de la suscrip
 
 Saldo hasta el límite: US$100 − US$2.21 = **US$97.79**.
 
+**Crédito de Azure for Students** (portal, *Education → Información general*, 2026-11-08):
+
+```text
+Créditos disponibles             98 US$ de 100 US$
+Días hasta que expire el crédito 344 (expira el 18/10/2027)
+Costos de noviembre              2,12 US$
+```
+
+El crédito se activó el 2026-10-18, dos días antes del inicio del proyecto. Lo consumido según el portal (≈ US$2, redondeado) coincide con el acumulado de la API. Los costos de noviembre del portal (US$2.12) son algo mayores que los de la consulta (US$2.07) porque incluyen cargos más recientes.
+
 ## Pendiente
 
 - [x] Ejecutar el bootstrap actualizado, que crea `id-eventos-ops` y su rol (2026-11-08).
 - [ ] Configurar el environment `azure-ops` y la variable `OPS_CLIENT_ID` (administrador del repositorio).
 - [ ] Enlazar la primera ejecución programada de `vm-power.yml` (`VM deallocated`).
 - [x] Primer registro de cargos reales (2026-11-08).
-- [ ] Crédito restante de Azure for Students, leído en el portal.
+- [x] Crédito restante de Azure for Students, leído en el portal: US$98 de US$100 (2026-11-08).
 - [ ] Registrar cada semana, y antes de cada entrega y de la defensa, el acumulado del mes, el acumulado del proyecto, el crédito restante y el saldo hasta US$100 (tabla de `costos.md`). El presupuesto mensual no cubre el agregado de varios meses.
 - [ ] Destruir los recursos del Laboratorio 4 después de su revisión docente (≈ US$1/día).
 
