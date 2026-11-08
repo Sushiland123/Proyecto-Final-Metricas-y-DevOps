@@ -48,4 +48,13 @@ Los cargos tardan hasta 24 horas en aparecer.
 
 | Fecha | Mes (suscripción) | Acumulado del proyecto | `rg-eventos-*` | Crédito restante | Saldo hasta US$100 | Observaciones |
 |---|---|---|---|---|---|---|
-| — | — | — | — | — | — | Primer despliegue en `mexicocentral` el 2026-11-08; primer registro el 2026-11-09 |
+| 2026-11-08 | US$2.07 | US$2.21 | US$0.17 | Pendiente (portal) | US$97.79 | Laboratorio 4 (`rg-ticket-*`): US$1.42. Práctica de la clase (`devops-k3s-rg`, ya eliminada): US$0.63. Los cargos del día pueden tardar hasta 24 h en aparecer |
+
+Consulta reproducible de los cargos reales, de solo lectura, en la API de Cost Management:
+
+```bash
+SUB=$(az account show --query id -o tsv)
+az rest --method post   --url "https://management.azure.com/subscriptions/$SUB/providers/Microsoft.CostManagement/query?api-version=2023-11-01"   --body '{"type":"ActualCost","timeframe":"Custom","timePeriod":{"from":"2026-10-20T00:00:00Z","to":"<fecha>T23:59:59Z"},"dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceGroupName"}]}}'
+```
+
+Con `"timeframe":"MonthToDate"` (sin `timePeriod`) se obtiene el acumulado del mes. El crédito restante de Azure for Students no está en esta API: se lee en el portal.
