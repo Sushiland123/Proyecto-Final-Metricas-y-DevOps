@@ -43,6 +43,7 @@ impl FromRequestParts<AppState> for Principal {
 
 /// The outer correlation layer also normalizes extraction, routing and panic errors.
 pub fn router(state: AppState) -> Router {
+    let scenario = crate::scenario::http::router(state.settings.clone());
     Router::new()
         .route("/health/live", get(live))
         .route("/health/ready", get(ready))
@@ -58,12 +59,13 @@ pub fn router(state: AppState) -> Router {
             get(|| async { Html(include_str!("../docs/api.html")) }),
         )
         .fallback(|| async { Error::NotFound })
+        .with_state(state)
+        .merge(scenario)
         .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
         .layer(tower_http::catch_panic::CatchPanicLayer::custom(|_| {
             Error::Internal.into_response()
         }))
         .layer(middleware::from_fn(correlate))
-        .with_state(state)
 }
 
 /// Accept only bounded printable identifier characters safe for headers and structured logs.
@@ -96,7 +98,12 @@ async fn correlate(request: Request, next: Next) -> Response {
         .map(|p| p.as_str().to_owned())
         .unwrap_or_else(|| "<unmatched>".to_owned());
     let mut response = next.run(request).await;
-    if response.status().is_client_error() || response.status().is_server_error() {
+    if (response.status().is_client_error() || response.status().is_server_error())
+        && response
+            .extensions()
+            .get::<crate::scenario::http::RecordedRejection>()
+            .is_none()
+    {
         let error = response
             .extensions()
             .get::<Error>()
@@ -236,6 +243,7 @@ struct Security;
 impl Modify for Security {
     /// Declare API-key authentication and the shared public failure contract for protected paths.
     fn modify(&self, api: &mut utoipa::openapi::OpenApi) {
+        api.merge(crate::scenario::http::ScenarioDoc::openapi());
         if let Some(components) = api.components.as_mut() {
             components.add_security_scheme(
                 "api_key",
@@ -245,8 +253,15 @@ impl Modify for Security {
         // Every protected endpoint shares these safe error contracts.
         for (path, item) in &mut api.paths.paths {
             if path.starts_with("/v1/") {
-                for operation in [&mut item.get, &mut item.post].into_iter().flatten() {
+                for operation in [&mut item.get, &mut item.post, &mut item.put]
+                    .into_iter()
+                    .flatten()
+                {
                     for status in ["401", "403", "422", "503", "500"] {
+                        // ESC3 intake has its own durable rejection receipt for 422.
+                        if operation.responses.responses.contains_key(status) {
+                            continue;
+                        }
                         operation.responses.responses.insert(
                             status.to_owned(),
                             utoipa::openapi::RefOr::T(

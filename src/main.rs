@@ -46,11 +46,47 @@ async fn run() -> Result<(), &'static str> {
         );
         return Ok(());
     }
-    if !matches!(command.as_str(), "serve" | "migrate") {
-        return Err("Usage: event-service [serve|migrate|openapi]");
+    if !matches!(command.as_str(), "serve" | "migrate" | "process" | "drain") {
+        return Err("Usage: event-service [serve|migrate|openapi|process|drain]");
     }
     let settings = Settings::from_env();
     let repository = PostgresRepository::new(&settings);
+    if matches!(command.as_str(), "process" | "drain") {
+        let store = event_service::scenario::store::Store {
+            pool: repository
+                .pool()
+                .map_err(|_| "DATABASE_URL required for processor")?
+                .clone(),
+        };
+        let batch_size: i64 = std::env::var("PROCESSOR_BATCH_SIZE")
+            .unwrap_or_else(|_| "100".into())
+            .parse()
+            .ok()
+            .filter(|n| (1..=1000).contains(n))
+            .ok_or("Invalid PROCESSOR_BATCH_SIZE")?;
+        let delay: u64 = std::env::var("PROCESSOR_POLL_MS")
+            .unwrap_or_else(|_| "100".into())
+            .parse()
+            .ok()
+            .filter(|n| (1..=60000).contains(n))
+            .ok_or("Invalid PROCESSOR_POLL_MS")?;
+        let worker = async {
+            loop {
+                match store.process(batch_size).await {
+                    Ok(0) if command == "drain" => return Ok(()),
+                    Ok(count) => {
+                        if count > 0 {
+                            tracing::info!(count, "readings processed");
+                        }
+                    }
+                    Err(_) if command == "drain" => return Err("Processor dependency unavailable"),
+                    Err(_) => tracing::warn!("processor dependency unavailable; retrying"),
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+        };
+        return tokio::select! { result = worker => result, _ = shutdown() => Ok(()) };
+    }
     if command == "migrate" {
         MIGRATOR
             .run(
