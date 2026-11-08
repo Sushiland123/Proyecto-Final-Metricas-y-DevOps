@@ -1,0 +1,58 @@
+# DEV-02 · Distribuir componentes como imágenes de contenedor
+
+[Issue #8](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/issues/8). Criterios: imagen y Dockerfile versionados, reconstrucción desde el commit, despliegue por digest y ninguna vulnerabilidad crítica sin justificar.
+
+## Decisiones
+
+- **Una imagen para la API y el procesador.** Son el mismo binario con distinto comando (`serve` y `process`), como describe [contenedores.md](../../arquitectura/contenedores.md). Se despliegan por separado, cada uno con su ciclo de vida. Dos imágenes contendrían los mismos bytes y permitirían desplegar versiones incompatibles entre sí.
+- **Runtime distroless.** No tiene shell ni gestor de paquetes, lo que reduce lo que un atacante puede usar dentro del contenedor. A cambio, `kubectl exec` no sirve: el diagnóstico usa logs, eventos y `kubectl debug`.
+- **Bases fijadas por digest.** Un tag puede cambiar de contenido; el digest no.
+- **Usuario 10001 numérico.** Kubernetes solo puede comprobar `runAsNonRoot` con un UID numérico.
+- **Sin `HEALTHCHECK` en la imagen.** Kubernetes lo ignora, y la salud se declara con probes en los manifiestos (DEV-11).
+- **Labels OCI** `source`, `revision` y `version`, recibidos como argumentos de construcción.
+
+## Cómo reproducir
+
+```bash
+docker build -t event-service:local --build-arg VERSION=local --build-arg REVISION="$(git rev-parse HEAD)" .
+bash scripts/verify-image.sh event-service:local
+```
+
+## Resultado obtenido · 2026-11-08, Docker local
+
+La imagen pesa 47.6 MB.
+
+```text
+OK     usuario numérico distinto de root (10001:10001)
+OK     la imagen no tiene shell
+OK     el binario arranca y entrega el contrato OpenAPI
+OK     label OCI source = https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps
+OK     label OCI revision = c59a59f500fa9729bf2194abcad8dc8ec8315900
+OK     label OCI version = local
+OK     la imagen no define variables de secretos
+OK     imagen sin vulnerabilidades críticas con parche disponible
+OK     crates de Rust sin vulnerabilidades críticas con parche disponible
+Imagen verificada: event-service:local
+```
+
+El control negativo con `debian:bookworm-slim` terminó con `6 comprobaciones fallaron` y código de salida 1, así que el script sí detecta una imagen que no cumple.
+
+Prueba funcional con Compose: la migración se aplicó, `/health/live` y `/health/ready` respondieron 200 y `/v1/events` sin clave respondió 401.
+
+## Vulnerabilidades
+
+| Alcance | Críticas | Altas |
+|---|---|---|
+| Imagen (Debian 12) | 0 | 1 |
+| Crates de Rust (`Cargo.lock`) | 0 | 0 |
+
+La vulnerabilidad alta es `CVE-2026-84782` en `libssl3`, relacionada con DTLS y con parche disponible. La API usa rustls y no DTLS, por lo que no se considera explotable aquí. Se corrige al actualizar el digest de la base. CI publica el reporte y los SBOM en el artefacto `container-security-evidence`.
+
+## Pendiente
+
+- [ ] Publicar en GHCR con tags semver y SHA (DEV-04).
+- [ ] Desplegar por digest (DEV-05 y DEV-09).
+
+## Limitaciones
+
+El binario va sin símbolos, por lo que Trivy no ve sus crates dentro de la imagen. Por eso `Cargo.lock` se analiza aparte y hay dos SBOM. La severidad bloqueante es solo la crítica con parche disponible; las altas quedan en el reporte para revisión.

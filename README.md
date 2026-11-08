@@ -95,7 +95,7 @@ docker compose --profile app run --rm api migrate
 docker compose --profile app up -d api
 ```
 
-Imagen multi-stage, usuario no root, puerto 8000 y migraciones SQL embebidas. No incluir secretos en la imagen. Compose usa la red interna para PostgreSQL. En Kubernetes, ejecutar `event-service migrate` como Job antes del despliegue y configurar probes HTTP. **Azure, K3s, Terraform y publicación de imágenes siguen siendo trabajo pendiente del backlog**; el Dockerfile no acredita un despliegue en la nube.
+Imagen multi-stage sobre distroless, sin shell, con usuario no root, puerto 8000 y migraciones SQL embebidas. No incluir secretos en la imagen. Compose usa la red interna para PostgreSQL. En Kubernetes, ejecutar `event-service migrate` como Job antes del despliegue y configurar probes HTTP. Verificación local: `bash scripts/verify-image.sh <imagen>` y `bash scripts/scan-secrets.sh` ([DEV-02](docs/evidencia/DEV-02/index.md)). **La publicación de imágenes y el despliegue en K3s siguen siendo trabajo pendiente del backlog**; el Dockerfile no acredita un despliegue en la nube.
 
 ## Configuración
 
