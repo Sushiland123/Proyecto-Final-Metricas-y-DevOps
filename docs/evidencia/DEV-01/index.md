@@ -26,8 +26,8 @@ Los dos hallazgos son claves ficticias de una prueba Python ya eliminada (`com03
 
 ## Pendiente
 
-- [ ] Proteger `main`. Lo hace un administrador; los pasos están en [DEV-03](../DEV-03/index.md).
 - [ ] Enlazar la ejecución del job `secrets` en el PR.
+- [ ] Agregar `secrets` a los checks requeridos de `main`. La protección ya está activa; el detalle está en [DEV-03](../DEV-03/index.md).
 
 ## Limitaciones
 

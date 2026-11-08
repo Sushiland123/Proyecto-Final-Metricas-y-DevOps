@@ -20,14 +20,14 @@ bash scripts/verify-image.sh event-service:local
 
 ## Resultado obtenido · 2026-11-08, Docker local
 
-La imagen pesa 47.6 MB.
+Imagen construida sobre `main` con el Escenario 3 (`3854c07`). Pesa 48.9 MB.
 
 ```text
 OK     usuario numérico distinto de root (10001:10001)
 OK     la imagen no tiene shell
 OK     el binario arranca y entrega el contrato OpenAPI
 OK     label OCI source = https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps
-OK     label OCI revision = c59a59f500fa9729bf2194abcad8dc8ec8315900
+OK     label OCI revision = 3854c07e6d9c96494f8f2b294658a1df0f116c10
 OK     label OCI version = local
 OK     la imagen no define variables de secretos
 OK     imagen sin vulnerabilidades críticas con parche disponible
@@ -37,7 +37,7 @@ Imagen verificada: event-service:local
 
 El control negativo con `debian:bookworm-slim` terminó con `6 comprobaciones fallaron` y código de salida 1, así que el script sí detecta una imagen que no cumple.
 
-Prueba funcional con Compose: la migración se aplicó, `/health/live` y `/health/ready` respondieron 200 y `/v1/events` sin clave respondió 401.
+Prueba funcional con Compose: la migración se aplicó y `/health/live` y `/health/ready` respondieron 200. El procesador (`process`) siguió en ejecución sin reiniciarse y `drain` terminó con código 0. En una ejecución anterior, sin el Escenario 3, `/v1/events` sin clave respondió 401.
 
 ## Vulnerabilidades
 

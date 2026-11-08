@@ -13,25 +13,22 @@
 
 Las validaciones de infraestructura están en `terraform.yml` (DEV-08). Las dependencias se cachean con `rust-cache` y la caché de Buildx. Los jobs `secrets` y `container` se reproducen en local con los scripts de [`scripts/`](../../../scripts).
 
-## Protección de `main` (la configura un administrador)
+## Protección de `main`
 
-**Settings → Branches → Add branch ruleset** o **Add rule**, para `main`:
+Estado leído de la API de GitHub el 2026-11-08: protección activa con los checks requeridos `quality`, `postgres` y `container`, con `enforcement_level: non_admins`. [`CODEOWNERS`](../../../.github/CODEOWNERS) asigna la revisión de todos los cambios al dueño del repositorio.
 
-1. Exigir pull request antes del merge, con al menos 1 aprobación.
-2. Exigir checks correctos, marcando `quality`, `postgres`, `secrets` y `container`.
-3. Bloquear force pushes y borrado de la rama.
-4. Aplicar la regla también a los administradores.
+Falta agregar `secrets` en **Settings → Branches**. Ese nombre solo se puede seleccionar después de que el job haya corrido una vez en este repositorio.
 
 No hay que marcar los checks de Terraform como requeridos: solo corren si el PR toca `infra/**`, y en los demás PR quedarían esperando para siempre.
 
-Los nombres `secrets` y `container` solo se pueden seleccionar después de que hayan corrido al menos una vez en este repositorio.
-
 ## Pendiente
 
-- [ ] Configurar la protección.
+- [ ] Agregar `secrets` a los checks requeridos.
 - [ ] Demostrar con un PR de prueba que un check fallido bloquea el merge.
 - [ ] Enlazar las ejecuciones reales.
 
 ## Limitaciones
 
 Los PR desde un fork no reciben OIDC ni escritura en el registro. Esto no afecta a estas validaciones, porque ninguna necesita credenciales.
+
+Con `non_admins`, un administrador puede integrar aunque los checks fallen, de modo que el bloqueo solo es total para los demás integrantes.
