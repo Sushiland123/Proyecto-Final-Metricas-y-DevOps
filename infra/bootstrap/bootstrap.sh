@@ -16,9 +16,10 @@ export MSYS_NO_PATHCONV=1 # Git Bash en Windows: no convertir /subscriptions/...
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="$ROOT/infra/bootstrap/bootstrap.env"
 
-LOCATION="${LOCATION:-westus}"
+LOCATION="${LOCATION:-westus}" # región del state; la plataforma usa la variable location de Terraform
 REPO="${GITHUB_REPOSITORY:-marchelo23/Proyecto-Final-Metricas-y-DevOps}"
 APPLY_ENVIRONMENT="azure-infra"
+OPS_ENVIRONMENT="azure-ops"
 
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -31,6 +32,8 @@ STORAGE="sttfeventos${SUFFIX}"
 CONTAINER="tfstate"
 PLAN_ID="id-eventos-plan"
 APPLY_ID="id-eventos-apply"
+OPS_ID="id-eventos-ops"
+OPS_ROLE="eventos-${SUFFIX}-vm-operator"
 
 SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 TENANT_ID="$(az account show --query tenantId -o tsv)"
@@ -58,7 +61,10 @@ ensure_fic() {
 }
 
 echo "== Resource providers"
-for ns in Microsoft.Storage Microsoft.ManagedIdentity Microsoft.Compute Microsoft.Network Microsoft.DevTestLab; do
+# Terraform no registra providers (resource_provider_registrations = "none"):
+# se registran aquí todos los que usa la configuración.
+for ns in Microsoft.Storage Microsoft.ManagedIdentity Microsoft.Compute Microsoft.Network \
+  Microsoft.Consumption; do
   az provider register --namespace "$ns" --wait -o none
 done
 
@@ -97,6 +103,37 @@ ensure_role "$PLAN_PRINCIPAL_ID" ServicePrincipal "Storage Blob Data Contributor
 ensure_role "$APPLY_PRINCIPAL_ID" ServicePrincipal "Contributor" "$SUB_SCOPE"
 ensure_role "$APPLY_PRINCIPAL_ID" ServicePrincipal "Storage Blob Data Contributor" "$STORAGE_ID"
 
+# Energía de la VM (workflow vm-power.yml). Corre sin aprobación, por eso solo
+# recibe un rol personalizado para leer, encender y desasignar VMs.
+az identity create -g "$RG" -n "$OPS_ID" --location "$LOCATION" -o none
+OPS_CLIENT_ID="$(az identity show -g "$RG" -n "$OPS_ID" --query clientId -o tsv)"
+OPS_PRINCIPAL_ID="$(az identity show -g "$RG" -n "$OPS_ID" --query principalId -o tsv)"
+if [[ "$(az role definition list --custom-role-only true --name "$OPS_ROLE" --query 'length(@)' -o tsv)" == "0" ]]; then
+  az role definition create -o none --role-definition "$(cat <<JSON
+{
+  "Name": "${OPS_ROLE}",
+  "Description": "Leer, encender y desasignar VMs del proyecto eventos (control de costos).",
+  "Actions": [
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/instanceView/read",
+    "Microsoft.Compute/virtualMachines/start/action",
+    "Microsoft.Compute/virtualMachines/deallocate/action"
+  ],
+  "NotActions": [],
+  "AssignableScopes": ["${SUB_SCOPE}"]
+}
+JSON
+)"
+fi
+# Un rol recién creado tarda en poder asignarse.
+for attempt in $(seq 1 18); do
+  if ensure_role "$OPS_PRINCIPAL_ID" ServicePrincipal "$OPS_ROLE" "$SUB_SCOPE" 2>/dev/null; then
+    break
+  fi
+  [[ "$attempt" == 18 ]] && { echo "No se pudo asignar ${OPS_ROLE} (propagación del rol)." >&2; exit 1; }
+  sleep 10
+done
+
 echo "== Credenciales federadas para ${REPO}"
 OWNER="${REPO%%/*}"
 NAME="${REPO#*/}"
@@ -107,6 +144,9 @@ for prefix in "repo:${OWNER}/${NAME}" "repo:${OWNER}@${OWNER_ID}/${NAME}@${REPO_
   tag="$([[ "$prefix" == *@* ]] && echo ids || echo nombre)"
   ensure_fic "$PLAN_ID" "github-pr-${tag}" "${prefix}:pull_request"
   ensure_fic "$APPLY_ID" "github-${APPLY_ENVIRONMENT}-${tag}" "${prefix}:environment:${APPLY_ENVIRONMENT}"
+  ensure_fic "$OPS_ID" "github-${OPS_ENVIRONMENT}-${tag}" "${prefix}:environment:${OPS_ENVIRONMENT}"
+  # Detección de drift programada (terraform-drift.yml): plan de solo lectura.
+  ensure_fic "$PLAN_ID" "github-${OPS_ENVIRONMENT}-${tag}" "${prefix}:environment:${OPS_ENVIRONMENT}"
 done
 
 cat > "$ENV_FILE" <<ENV
@@ -119,6 +159,7 @@ TFSTATE_STORAGE_ACCOUNT=${STORAGE}
 TFSTATE_CONTAINER=${CONTAINER}
 PLAN_CLIENT_ID=${PLAN_CLIENT_ID}
 APPLY_CLIENT_ID=${APPLY_CLIENT_ID}
+OPS_CLIENT_ID=${OPS_CLIENT_ID}
 ENV
 
 cat <<MSG
@@ -126,14 +167,16 @@ cat <<MSG
 Bootstrap completo. Valores guardados en infra/bootstrap/bootstrap.env (no versionado).
 
 1. Verificar que infra/terraform/backend.hcl use storage_account_name = "${STORAGE}".
-2. Un administrador del repositorio ${REPO} debe crear el environment
-   "${APPLY_ENVIRONMENT}" (con revisores requeridos) y estas variables de GitHub Actions:
+2. Un administrador del repositorio ${REPO} debe crear:
+     - el environment "${APPLY_ENVIRONMENT}" con revisores requeridos;
+     - el environment "${OPS_ENVIRONMENT}" limitado a la rama main, sin revisores;
+   y estas variables de GitHub Actions:
      AZURE_SUBSCRIPTION_ID=${SUBSCRIPTION_ID}
      AZURE_TENANT_ID=${TENANT_ID}
      PLAN_CLIENT_ID=${PLAN_CLIENT_ID}
      APPLY_CLIENT_ID=${APPLY_CLIENT_ID}
+     OPS_CLIENT_ID=${OPS_CLIENT_ID}
      INFRA_NAME_SUFFIX=${SUFFIX}
-     INFRA_LOCATION=${LOCATION}
      INFRA_ADMIN_SSH_PUBLIC_KEY=<clave pública SSH>
      INFRA_ADMIN_CIDRS=["<IP pública>/32"]
      INFRA_BUDGET_CONTACT_EMAILS=["<correo>"]

@@ -1,0 +1,59 @@
+name: Energía de la VM
+
+# Control de costos de la VM de K3s (DEV-14): apagado diario programado y
+# encendido o apagado manual para cualquier integrante con acceso al repositorio,
+# sin credenciales de Azure. La identidad id-eventos-ops solo puede leer,
+# encender y desasignar VMs; el environment azure-ops la limita a la rama main.
+on:
+  schedule:
+    # 05:00 UTC = 23:00 en El Salvador (UTC-6, sin horario de verano).
+    # GitHub puede ejecutar los cron con algunos minutos de retraso.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Acción sobre la VM
+        type: choice
+        options: [status, start, stop]
+        default: status
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vm-power
+  cancel-in-progress: false
+
+jobs:
+  power:
+    name: VM ${{ github.event_name == 'schedule' && 'stop' || inputs.action }}
+    # Sin OPS_CLIENT_ID (repositorio aún no configurado) el job no corre.
+    if: vars.OPS_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    environment: azure-ops
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ACTION: ${{ github.event_name == 'schedule' && 'stop' || inputs.action }}
+      RG: rg-eventos-${{ vars.INFRA_NAME_SUFFIX }}
+      VM: vm-eventos-${{ vars.INFRA_NAME_SUFFIX }}-k3s
+    steps:
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.OPS_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: VM ${{ env.ACTION }}
+        run: |
+          case "$ACTION" in
+            start) az vm start -g "$RG" -n "$VM" -o none ;;
+            stop) az vm deallocate -g "$RG" -n "$VM" -o none ;; # desasignar: deja de cobrarse el cómputo
+            status) ;;
+            *) echo "::error::Acción desconocida: $ACTION"; exit 1 ;;
+          esac
+          state="$(az vm get-instance-view -g "$RG" -n "$VM" \
+            --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" -o tsv)"
+          echo "$VM: $state"
+          echo "### \`$VM\`: $state (acción: $ACTION)" >> "$GITHUB_STEP_SUMMARY"

@@ -49,6 +49,13 @@ jobs:
       - name: terraform validate
         run: terraform validate -no-color
 
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      - name: tflint
+        run: tflint --format compact
+
   # Los PR desde forks no reciben token OIDC ni variables: allí solo corre validate.
   plan-omitted:
     name: plan (omitido)
@@ -81,7 +88,6 @@ jobs:
       ARM_USE_AZUREAD: 'true'
       ARM_USE_CLI: 'false'
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_location: ${{ vars.INFRA_LOCATION }}
       TF_VAR_name_suffix: ${{ vars.INFRA_NAME_SUFFIX }}
       TF_VAR_admin_ssh_public_key: ${{ vars.INFRA_ADMIN_SSH_PUBLIC_KEY }}
       TF_VAR_admin_cidrs: ${{ vars.INFRA_ADMIN_CIDRS }}
@@ -117,6 +123,15 @@ jobs:
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Guardar el plan como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-pr-${{ github.event.pull_request.number }}
+          path: infra/terraform/plan.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Solo cambios ya integrados a main. El environment azure-infra exige la
   # aprobación de un revisor antes de entregar el token de la identidad apply.
   # Sin APPLY_CLIENT_ID (repo aún no configurado) el job no corre.
@@ -140,7 +155,6 @@ jobs:
       ARM_USE_AZUREAD: 'true'
       ARM_USE_CLI: 'false'
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_location: ${{ vars.INFRA_LOCATION }}
       TF_VAR_name_suffix: ${{ vars.INFRA_NAME_SUFFIX }}
       TF_VAR_admin_ssh_public_key: ${{ vars.INFRA_ADMIN_SSH_PUBLIC_KEY }}
       TF_VAR_admin_cidrs: ${{ vars.INFRA_ADMIN_CIDRS }}
