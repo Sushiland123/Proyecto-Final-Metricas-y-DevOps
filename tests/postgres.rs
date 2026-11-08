@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Run explicitly: cargo test --test postgres -- --ignored
+#[path = "scenario3/mod.rs"]
+mod scenario3;
 mod support;
 use event_service::{MIGRATOR, domain::*, error::Error, repository::EventRepository};
 use serde_json::{Value, json};
@@ -425,7 +427,7 @@ async fn data_survives_new_pool_and_repeated_migrations() {
         .fetch_one(&db.pool)
         .await
         .unwrap();
-    assert_eq!(migrations, 2);
+    assert_eq!(migrations as usize, MIGRATOR.iter().count());
     let indexes: Vec<String> =
         sqlx::query_scalar("SELECT indexname FROM pg_indexes WHERE tablename = 'events'")
             .fetch_all(&db.pool)

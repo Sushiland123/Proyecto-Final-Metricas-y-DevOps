@@ -15,6 +15,15 @@ pub struct Principal {
     sources: Option<BTreeSet<String>>,
 }
 impl Principal {
+    /// Device provisioning and limit changes require the global producer, not a scoped key.
+    pub fn require_device_admin(&self) -> Result<(), Error> {
+        self.require(Role::Producer)?;
+        if self.sources.is_none() {
+            Ok(())
+        } else {
+            Err(Error::Forbidden)
+        }
+    }
     /// Deny operations outside the authenticated role before any data access.
     pub fn require(&self, role: Role) -> Result<(), Error> {
         if self.role == role {

@@ -30,9 +30,15 @@ pub fn settings() -> Settings {
 /// Compose the real HTTP stack with a lazy PostgreSQL adapter for boundary tests.
 pub fn app(settings: Settings) -> Router {
     let repository = PostgresRepository::new(&settings);
+    let scenario = repository
+        .pool()
+        .ok()
+        .cloned()
+        .map(|pool| event_service::scenario::store::Store { pool });
     api::router(AppState {
         settings: Arc::new(settings),
         service: EventService::new(Arc::new(repository)),
+        scenario,
     })
 }
 /// Build a valid event whose natural key is owned by the calling test.

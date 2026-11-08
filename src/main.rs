@@ -6,8 +6,35 @@ use event_service::{
     postgres::PostgresRepository,
     service::EventService,
 };
+use std::time::Duration;
 use std::{process::ExitCode, sync::Arc};
 use utoipa::OpenApi;
+
+/// Bounded retry state for transient processor failures; success resets the delay.
+struct RetryBackoff {
+    initial: Duration,
+    next: Duration,
+}
+impl RetryBackoff {
+    /// Honor configured polling/read backoff with a 100 ms floor and 60 s ceiling.
+    fn new(initial: Duration) -> Self {
+        let initial = initial.clamp(Duration::from_millis(100), Duration::from_secs(60));
+        Self {
+            initial,
+            next: initial,
+        }
+    }
+    /// Return the current delay and double the next delay without overflowing.
+    fn failure(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = self.next.saturating_mul(2).min(Duration::from_secs(60));
+        delay
+    }
+    /// Restore the configured first-retry delay after a successful batch or empty poll.
+    fn reset(&mut self) {
+        self.next = self.initial;
+    }
+}
 
 #[tokio::main]
 /// Initialize safe diagnostics and translate command failures to a nonzero process exit status.
@@ -46,11 +73,66 @@ async fn run() -> Result<(), &'static str> {
         );
         return Ok(());
     }
-    if !matches!(command.as_str(), "serve" | "migrate") {
-        return Err("Usage: event-service [serve|migrate|openapi]");
+    if !matches!(command.as_str(), "serve" | "migrate" | "process" | "drain") {
+        return Err("Usage: event-service [serve|migrate|openapi|process|drain]");
     }
     let settings = Settings::from_env();
     let repository = PostgresRepository::new(&settings);
+    if matches!(command.as_str(), "process" | "drain") {
+        let store = event_service::scenario::store::Store {
+            pool: repository
+                .pool()
+                .map_err(|_| "DATABASE_URL required for processor")?
+                .clone(),
+        };
+        let batch_size: i64 = std::env::var("PROCESSOR_BATCH_SIZE")
+            .unwrap_or_else(|_| "100".into())
+            .parse()
+            .ok()
+            .filter(|n| (1..=1000).contains(n))
+            .ok_or("Invalid PROCESSOR_BATCH_SIZE")?;
+        let delay: u64 = std::env::var("PROCESSOR_POLL_MS")
+            .unwrap_or_else(|_| "100".into())
+            .parse()
+            .ok()
+            .filter(|n| (1..=60000).contains(n))
+            .ok_or("Invalid PROCESSOR_POLL_MS")?;
+        let worker = async {
+            let mut backoff =
+                RetryBackoff::new(Duration::from_millis(delay).max(settings.retry_backoff));
+            loop {
+                let mut wait = Duration::from_millis(delay);
+                match store.process(batch_size).await {
+                    Ok(0) if command == "drain" => return Ok(()),
+                    Ok(count) => {
+                        backoff.reset();
+                        if count > 0 {
+                            tracing::info!(count, "readings processed");
+                        }
+                    }
+                    Err(error) => {
+                        let code = error.details().1;
+                        if command == "drain" {
+                            tracing::error!(code, "drain failed");
+                            return Err("Processor drain failed");
+                        }
+                        if error != event_service::error::Error::Unavailable {
+                            tracing::error!(code, "non-retryable processor failure");
+                            return Err("Processor configuration or operation invalid");
+                        }
+                        wait = backoff.failure();
+                        tracing::warn!(
+                            code,
+                            retry_ms = wait.as_millis() as u64,
+                            "processor dependency unavailable; retrying"
+                        );
+                    }
+                }
+                tokio::time::sleep(wait).await;
+            }
+        };
+        return tokio::select! { result = worker => result, _ = shutdown() => Ok(()) };
+    }
     if command == "migrate" {
         MIGRATOR
             .run(
@@ -63,9 +145,15 @@ async fn run() -> Result<(), &'static str> {
         tracing::info!("migrations applied");
         return Ok(());
     }
+    let scenario = repository
+        .pool()
+        .ok()
+        .cloned()
+        .map(|pool| event_service::scenario::store::Store { pool });
     let state = AppState {
         settings: Arc::new(settings),
         service: EventService::new(Arc::new(repository)),
+        scenario,
     };
     let address = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8000".to_owned());
     let listener = tokio::net::TcpListener::bind(&address)
@@ -90,4 +178,34 @@ async fn shutdown() {
         }
     }
     let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    /// Transient failures exponentially back off at a fixed cap and success resets them.
+    fn processor_retry_is_bounded_and_resets() {
+        let mut retry = RetryBackoff::new(Duration::from_millis(250));
+        assert_eq!(retry.failure(), Duration::from_millis(250));
+        assert_eq!(retry.failure(), Duration::from_millis(500));
+        for _ in 0..32 {
+            retry.failure();
+        }
+        assert_eq!(retry.failure(), Duration::from_secs(60));
+        retry.reset();
+        assert_eq!(retry.failure(), Duration::from_millis(250));
+    }
+    #[test]
+    /// Extreme configuration never produces a tight retry loop or unbounded waiting.
+    fn processor_retry_clamps_initial_delay() {
+        assert_eq!(
+            RetryBackoff::new(Duration::ZERO).failure(),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            RetryBackoff::new(Duration::MAX).failure(),
+            Duration::from_secs(60)
+        );
+    }
 }

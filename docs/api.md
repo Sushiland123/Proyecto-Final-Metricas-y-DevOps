@@ -100,3 +100,10 @@ Resumen: `total_events`, `unique_sources`, `unique_types`, `first_occurred_at`, 
 Se normalizan JSON inválido, content-type incorrecto, cuerpo mayor de 4 MiB y parámetros desconocidos a 422. Métodos no admitidos devuelven 405 y conservan la cabecera `Allow`. No se reflejan valores de entrada ni errores SQL. Si coinciden varios fallos, no se garantiza prioridad salvo que se autentica antes de acceder al repositorio.
 
 Todas las respuestas incluyen `X-Request-ID`. Se acepta una única cabecera con patrón `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`; de lo contrario se genera UUID v4. Los errores registran código, estado, plantilla de ruta e ID; nunca payload, claves, DSN ni URL con valores del cliente. TLS, rate limiting y límites de conexión del proxy deben configurarse en el despliegue.
+# API específica de mantenimiento · ESC3
+
+La API genérica documentada debajo se mantiene por compatibilidad. Para el escenario
+oficial usar [dispositivos, lecturas, alertas, recibos y contadores](escenario.md#api-específica).
+El contrato generado `/openapi.json` incluye ambas APIs. `POST /v1/readings` confirma
+recepción durable con 202 (no procesamiento completo); los rechazos registrados
+devuelven 422 con su recibo verificable.
