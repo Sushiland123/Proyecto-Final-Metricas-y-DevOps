@@ -1,7 +1,7 @@
 # Copiar como terraform.tfvars (no versionado). Los valores salen de
 # infra/bootstrap/bootstrap.env y del administrador.
 subscription_id       = "00000000-0000-0000-0000-000000000000"
-location              = "westus"
+location              = "mexicocentral"
 name_suffix           = "abc123"
 admin_ssh_public_key  = "ssh-ed25519 AAAA... usuario@equipo"
 admin_cidrs           = ["203.0.113.10/32"]

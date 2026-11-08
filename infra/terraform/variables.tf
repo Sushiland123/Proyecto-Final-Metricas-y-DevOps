@@ -4,9 +4,9 @@ variable "subscription_id" {
 }
 
 variable "location" {
-  description = "Región de Azure. Debe estar permitida por la política de la suscripción y ofrecer el tamaño de VM elegido."
+  description = "Región de Azure. mexicocentral es la región validada en la clase de integración con K3s."
   type        = string
-  default     = "westus"
+  default     = "mexicocentral"
 }
 
 variable "name_suffix" {
@@ -23,6 +23,12 @@ variable "vm_size" {
   description = "Tamaño de la VM que aloja K3s, la aplicación, PostgreSQL y la observabilidad."
   type        = string
   default     = "Standard_B2s_v2"
+}
+
+variable "vm_zone" {
+  description = "Zona de disponibilidad de la VM. En mexicocentral, Standard_B2s_v2 está restringido en la zona 2 para Azure for Students."
+  type        = string
+  default     = "1"
 }
 
 variable "os_disk_size_gb" {
@@ -63,23 +69,6 @@ variable "k3s_version" {
   description = "Versión fija de K3s que instala cloud-init."
   type        = string
   default     = "v1.35.2+k3s1"
-}
-
-variable "auto_shutdown_time" {
-  description = "Hora diaria (HHmm) en que la VM se apaga y desasigna para dejar de cobrar cómputo."
-  type        = string
-  default     = "2300"
-
-  validation {
-    condition     = can(regex("^([01][0-9]|2[0-3])[0-5][0-9]$", var.auto_shutdown_time))
-    error_message = "auto_shutdown_time debe tener formato HHmm."
-  }
-}
-
-variable "auto_shutdown_timezone" {
-  description = "Zona horaria del apagado automático."
-  type        = string
-  default     = "Central America Standard Time"
 }
 
 variable "create_budget" {

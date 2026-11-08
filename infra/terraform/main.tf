@@ -1,9 +1,11 @@
 locals {
   prefix = "eventos-${var.name_suffix}"
   tags = {
-    project    = "eventos"
-    scenario   = "3-ingesta-analisis-eventos"
-    managed_by = "terraform"
+    project     = "eventos"
+    scenario    = "3-ingesta-analisis-eventos"
+    environment = "compartido" # development y production son namespaces del mismo clúster
+    cost_center = "proyecto-catedra-2026"
+    managed_by  = "terraform"
   }
 }
 
@@ -28,6 +30,14 @@ resource "azurerm_subnet" "k3s" {
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = ["10.40.1.0/24"]
+
+  # La subred no tiene ubicación propia: si la VNet se reemplaza (por ejemplo
+  # al cambiar de región), la subred también debe recrearse. Se referencia el id,
+  # que solo cambia con un reemplazo: una actualización en sitio de la VNet
+  # (por ejemplo de tags) no recrea la subred.
+  lifecycle {
+    replace_triggered_by = [azurerm_virtual_network.main.id]
+  }
 }
 
 # Exposición mínima: HTTP/HTTPS públicos para el Ingress de K3s, SSH solo
@@ -91,6 +101,10 @@ resource "azurerm_network_security_group" "k3s" {
 resource "azurerm_subnet_network_security_group_association" "k3s" {
   subnet_id                 = azurerm_subnet.k3s.id
   network_security_group_id = azurerm_network_security_group.k3s.id
+
+  lifecycle {
+    replace_triggered_by = [azurerm_subnet.k3s.id]
+  }
 }
 
 # La etiqueta DNS da un nombre estable <label>.<región>.cloudapp.azure.com para
@@ -129,6 +143,7 @@ resource "azurerm_linux_virtual_machine" "k3s" {
   location                        = azurerm_resource_group.main.location
   resource_group_name             = azurerm_resource_group.main.name
   size                            = var.vm_size
+  zone                            = var.vm_zone
   admin_username                  = var.admin_username
   disable_password_authentication = true
   network_interface_ids           = [azurerm_network_interface.k3s.id]
@@ -159,20 +174,10 @@ resource "azurerm_linux_virtual_machine" "k3s" {
   }))
 }
 
-# El apagado desasigna la VM: deja de cobrarse el cómputo; el disco y la IP
-# pública estática siguen generando cargo.
-resource "azurerm_dev_test_global_vm_shutdown_schedule" "k3s" {
-  virtual_machine_id    = azurerm_linux_virtual_machine.k3s.id
-  location              = azurerm_resource_group.main.location
-  enabled               = true
-  daily_recurrence_time = var.auto_shutdown_time
-  timezone              = var.auto_shutdown_timezone
-  tags                  = local.tags
-
-  notification_settings {
-    enabled = false
-  }
-}
+# El apagado diario no se declara aquí: Microsoft.DevTestLab/schedules no existe
+# en mexicocentral y no acepta otra región que la de la VM. Lo ejecuta el
+# workflow vm-power.yml con una identidad que solo puede leer, encender y
+# desasignar VMs (docs/infra/costos.md).
 
 # ---------------------------------------------------------------- costos
 

@@ -11,11 +11,47 @@ write_files:
     content: |
       write-kubeconfig-mode: "0600"
       node-name: k3s-eventos
+  - path: /usr/local/sbin/k3s-bootstrap.sh
+    permissions: "0750"
+    content: |
+      #!/bin/bash
+      # Instala K3s con reintentos y espera un tiempo acotado a que el nodo esté Ready.
+      # Si no lo logra termina con error: cloud-init queda en "error" en lugar de
+      # esperar para siempre. Es idempotente y se puede volver a ejecutar a mano.
+      set -euo pipefail
+      exec > >(tee -a /var/log/k3s-bootstrap.log) 2>&1
+      echo "== $(date -Is) instalación de K3s ${k3s_version}"
+
+      installed=false
+      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -sfL --retry 3 --retry-delay 5 https://get.k3s.io -o /tmp/k3s-install.sh &&
+          INSTALL_K3S_VERSION='${k3s_version}' sh /tmp/k3s-install.sh; then
+          installed=true
+          break
+        fi
+        echo "Intento $attempt fallido; nuevo intento en 30 s"
+        sleep 30
+      done
+      if [ "$installed" != true ]; then
+        echo "ERROR: no se pudo instalar K3s"
+        exit 1
+      fi
+
+      for i in $(seq 1 60); do
+        if /usr/local/bin/k3s kubectl get nodes --no-headers 2>/dev/null | grep -q ' Ready '; then
+          break
+        fi
+        if [ "$i" -eq 60 ]; then
+          echo "ERROR: el nodo no llegó a Ready en 10 minutos"
+          exit 1
+        fi
+        sleep 10
+      done
+
+      install -d -m 0700 -o ${admin_username} -g ${admin_username} /home/${admin_username}/.kube
+      install -m 0600 -o ${admin_username} -g ${admin_username} /etc/rancher/k3s/k3s.yaml /home/${admin_username}/.kube/config
+      /usr/local/bin/k3s kubectl get nodes -o wide
+      echo "== $(date -Is) K3s listo"
 
 runcmd:
-  - curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
-  - INSTALL_K3S_VERSION="${k3s_version}" sh /tmp/k3s-install.sh
-  - until /usr/local/bin/k3s kubectl get nodes 2>/dev/null | grep -q " Ready "; do sleep 5; done
-  - install -d -m 0700 -o ${admin_username} -g ${admin_username} /home/${admin_username}/.kube
-  - install -m 0600 -o ${admin_username} -g ${admin_username} /etc/rancher/k3s/k3s.yaml /home/${admin_username}/.kube/config
-  - /usr/local/bin/k3s kubectl get nodes -o wide > /var/log/k3s-bootstrap.log
+  - [/usr/local/sbin/k3s-bootstrap.sh]
