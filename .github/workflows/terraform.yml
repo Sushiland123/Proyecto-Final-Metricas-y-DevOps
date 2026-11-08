@@ -90,8 +90,8 @@ jobs:
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_name_suffix: ${{ vars.INFRA_NAME_SUFFIX }}
       TF_VAR_admin_ssh_public_key: ${{ vars.INFRA_ADMIN_SSH_PUBLIC_KEY }}
-      TF_VAR_admin_cidrs: ${{ vars.INFRA_ADMIN_CIDRS }}
-      TF_VAR_budget_contact_emails: ${{ vars.INFRA_BUDGET_CONTACT_EMAILS }}
+      TF_VAR_admin_cidrs: ${{ secrets.INFRA_ADMIN_CIDRS }}
+      TF_VAR_budget_contact_emails: ${{ secrets.INFRA_BUDGET_CONTACT_EMAILS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -157,8 +157,8 @@ jobs:
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_name_suffix: ${{ vars.INFRA_NAME_SUFFIX }}
       TF_VAR_admin_ssh_public_key: ${{ vars.INFRA_ADMIN_SSH_PUBLIC_KEY }}
-      TF_VAR_admin_cidrs: ${{ vars.INFRA_ADMIN_CIDRS }}
-      TF_VAR_budget_contact_emails: ${{ vars.INFRA_BUDGET_CONTACT_EMAILS }}
+      TF_VAR_admin_cidrs: ${{ secrets.INFRA_ADMIN_CIDRS }}
+      TF_VAR_budget_contact_emails: ${{ secrets.INFRA_BUDGET_CONTACT_EMAILS }}
     steps:
       - uses: actions/checkout@v4
 

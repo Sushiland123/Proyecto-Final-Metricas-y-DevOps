@@ -121,18 +121,18 @@ Ningún PR aplica cambios. El apply solo ocurre con código integrado y aprobado
 1. **Settings → Environments:**
    - `azure-infra` → *Required reviewers* (al menos un integrante distinto de quien hizo el cambio). Crearlo con revisores **antes** de definir `APPLY_CLIENT_ID`.
    - `azure-ops` → *Deployment branches and tags*: solo `main`. Sin revisores, para que el apagado y el drift programados no esperen aprobación. Sus dos identidades no pueden crear ni modificar recursos.
-2. **Settings → Secrets and variables → Actions → Variables:**
+2. **Settings → Secrets and variables → Actions:**
 
-| Variable | Origen |
-|---|---|
-| `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID` | `infra/bootstrap/bootstrap.env` |
-| `PLAN_CLIENT_ID`, `APPLY_CLIENT_ID`, `OPS_CLIENT_ID` | `infra/bootstrap/bootstrap.env` |
-| `INFRA_NAME_SUFFIX` | `infra/bootstrap/bootstrap.env` |
-| `INFRA_ADMIN_SSH_PUBLIC_KEY` | Clave pública SSH del administrador |
-| `INFRA_ADMIN_CIDRS` | Lista HCL, por ejemplo `["203.0.113.10/32"]` |
-| `INFRA_BUDGET_CONTACT_EMAILS` | Lista HCL, por ejemplo `["integrante@esen.edu.sv"]` |
+| Tipo | Nombre | Origen |
+|---|---|---|
+| Variable | `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID` | `infra/bootstrap/bootstrap.env` |
+| Variable | `PLAN_CLIENT_ID`, `APPLY_CLIENT_ID`, `OPS_CLIENT_ID` | `infra/bootstrap/bootstrap.env` |
+| Variable | `INFRA_NAME_SUFFIX` | `infra/bootstrap/bootstrap.env` |
+| Variable | `INFRA_ADMIN_SSH_PUBLIC_KEY` | Clave pública SSH del administrador |
+| **Secret** | `INFRA_ADMIN_CIDRS` | Lista HCL, por ejemplo `["203.0.113.10/32"]` |
+| **Secret** | `INFRA_BUDGET_CONTACT_EMAILS` | Lista HCL, por ejemplo `["integrante@esen.edu.sv"]` |
 
-Ninguno es un secreto: el acceso a Azure usa OIDC y no hay contraseñas en el repositorio.
+No hay credenciales: el acceso a Azure usa OIDC. La IP de administración y los correos se guardan como *secrets* solo por privacidad. El repositorio es público, y las *variables* aparecen en texto plano en los logs de Actions. Además, Terraform las declara `sensitive`, así que tampoco aparecen en los planes ni en el artefacto del plan.
 
 ## Reconstrucción desde cero · DEV-13
 

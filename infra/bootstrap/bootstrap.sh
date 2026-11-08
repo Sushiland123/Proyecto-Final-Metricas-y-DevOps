@@ -178,6 +178,7 @@ Bootstrap completo. Valores guardados en infra/bootstrap/bootstrap.env (no versi
      OPS_CLIENT_ID=${OPS_CLIENT_ID}
      INFRA_NAME_SUFFIX=${SUFFIX}
      INFRA_ADMIN_SSH_PUBLIC_KEY=<clave pública SSH>
+   y estos secrets (por privacidad: el repositorio es público y las variables salen en los logs):
      INFRA_ADMIN_CIDRS=["<IP pública>/32"]
      INFRA_BUDGET_CONTACT_EMAILS=["<correo>"]
 MSG

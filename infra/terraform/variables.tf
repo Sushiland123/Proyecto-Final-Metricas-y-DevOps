@@ -56,6 +56,8 @@ variable "admin_ssh_public_key" {
 variable "admin_cidrs" {
   description = "Rangos IPv4 autorizados para SSH (por ejemplo la IP pública del administrador con /32)."
   type        = list(string)
+  # El repositorio es público: la IP personal no debe aparecer en planes, logs ni artefactos.
+  sensitive = true
 
   validation {
     condition = length(var.admin_cidrs) > 0 && alltrue([
@@ -92,5 +94,6 @@ variable "budget_start_date" {
 variable "budget_contact_emails" {
   description = "Correos que reciben las alertas del presupuesto."
   type        = list(string)
+  sensitive   = true
   default     = []
 }

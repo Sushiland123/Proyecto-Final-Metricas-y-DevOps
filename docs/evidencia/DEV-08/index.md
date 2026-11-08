@@ -15,7 +15,7 @@
 | `terraform.yml` | push a `main` o manual | `plan -out=tfplan` y `apply tfplan` en el environment `azure-infra`, que exige la aprobación de un revisor antes de entregar el token de `id-eventos-apply` |
 | [`terraform-drift.yml`](../../../.github/workflows/terraform-drift.yml) | diario, 08:00 | `plan -detailed-exitcode` de solo lectura; falla si Azure difiere del código |
 
-Las identidades usan OIDC: el repositorio solo guarda variables (IDs de cliente, tenant y suscripción), no secretos. El job de apply tiene la condición `github.event_name != 'pull_request'`, de modo que ningún PR puede aplicar.
+Las identidades usan OIDC, así que no hay credenciales de Azure en el repositorio. Las variables guardan IDs de cliente, tenant y suscripción. La IP de administración y los correos van como *secrets* y como variables `sensitive` de Terraform, solo por privacidad: el repositorio es público. El job de apply tiene la condición `github.event_name != 'pull_request'`, de modo que ningún PR puede aplicar.
 
 ## Resultado obtenido · 2026-11-08
 
