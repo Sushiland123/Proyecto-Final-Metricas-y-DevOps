@@ -46,6 +46,15 @@ Los contratos de `domain.rs` comparten metadatos de serialización, persistencia
 
 ## Herramientas y CI
 
+### Hooks locales
+
+Con Node.js y npm instalados, ejecutar `npm ci` después de clonar para instalar
+Husky y activar los hooks de Git. El hook `pre-commit` ejecuta
+`cargo fmt --all -- --check`; si falla, corregir con `cargo fmt --all` y volver
+a intentar el commit. No modifica archivos automáticamente ni necesita una DB.
+Node.js se usa solo para herramientas de desarrollo, no para la aplicación.
+Los hooks locales no sustituyen las validaciones de CI.
+
 Rust fijado por `rust-toolchain.toml`, dependencias por `Cargo.lock`. Ejecutar fmt, Clippy con `-D warnings`, pruebas y rustdoc siguiendo el README. El workflow `acceptance.yml` separa calidad, PostgreSQL/experimentos, escaneo de secretos y build y verificación del contenedor no-root ([DEV-03](evidencia/DEV-03/index.md)). Publica el contrato, rustdoc y resultados de aceptación como artefactos. No publica imágenes en un registro ni aplica infraestructura cloud automáticamente.
 
 `cargo run --locked -- openapi` no necesita DB. `cargo doc --locked --no-deps` documenta los módulos públicos. Consultas SQL dinámicas se verifican contra PostgreSQL en integración, no mediante conexión a DB durante compilación.
