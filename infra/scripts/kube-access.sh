@@ -16,8 +16,13 @@ OUT="${1:-$ROOT/kubeconfig}"
 KEY_OPT=""
 [[ -n "${SSH_KEY:-}" ]] && KEY_OPT="-i ${SSH_KEY}"
 
+# Archivo temporal con permisos 600 desde su creación: si SSH falla, OUT no
+# queda vacío ni a medias.
+umask 077
+TMP="$(mktemp "${OUT}.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
 # shellcheck disable=SC2086
-ssh $KEY_OPT -o StrictHostKeyChecking=accept-new "${ADMIN}@${FQDN}" 'cat ~/.kube/config' > "$OUT"
-chmod 600 "$OUT"
+ssh $KEY_OPT -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new "${ADMIN}@${FQDN}" 'cat ~/.kube/config' > "$TMP"
+mv "$TMP" "$OUT"
 echo "kubeconfig guardado en $OUT (servidor https://127.0.0.1:6443)."
 echo "Abrir el túnel en otra terminal: ssh ${KEY_OPT:+$KEY_OPT }-N -L 6443:127.0.0.1:6443 ${ADMIN}@${FQDN}"

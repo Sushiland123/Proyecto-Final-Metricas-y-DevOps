@@ -34,6 +34,8 @@ jobs:
         working-directory: infra/terraform
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -94,6 +96,8 @@ jobs:
       TF_VAR_budget_contact_emails: ${{ secrets.INFRA_BUDGET_CONTACT_EMAILS }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -132,12 +136,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Solo cambios ya integrados a main. El environment azure-infra exige la
-  # aprobación de un revisor antes de entregar el token de la identidad apply.
-  # Sin APPLY_CLIENT_ID (repo aún no configurado) el job no corre.
+  # Solo cambios ya integrados a main, también con workflow_dispatch: la
+  # condición exige refs/heads/main y el environment azure-infra solo admite
+  # main y pide la aprobación de un revisor antes de entregar el token de la
+  # identidad apply. Sin APPLY_CLIENT_ID (repo aún no configurado) el job no corre.
   apply:
     name: apply controlado
-    if: github.event_name != 'pull_request' && vars.APPLY_CLIENT_ID != ''
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.APPLY_CLIENT_ID != ''
     needs: validate
     runs-on: ubuntu-latest
     environment: azure-infra
@@ -161,6 +166,8 @@ jobs:
       TF_VAR_budget_contact_emails: ${{ secrets.INFRA_BUDGET_CONTACT_EMAILS }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: hashicorp/setup-terraform@v3
         with:

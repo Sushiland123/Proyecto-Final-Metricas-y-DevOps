@@ -49,7 +49,7 @@ Se reemplazó por [`vm-power.yml`](../../../.github/workflows/vm-power.yml), que
 
 - [ ] Ejecutar el bootstrap actualizado, que crea `id-eventos-ops` y su rol, y configurar el environment `azure-ops`.
 - [ ] Enlazar la primera ejecución programada de `vm-power.yml` (`VM deallocated`).
-- [ ] Registrar los cargos observados en Cost Management (tabla de `costos.md`) antes de cada entrega y de la defensa.
+- [ ] Registrar cada semana, y antes de cada entrega y de la defensa, el acumulado del mes, el acumulado del proyecto, el crédito restante y el saldo hasta US$100 (tabla de `costos.md`). El presupuesto mensual no cubre el agregado de varios meses.
 
 ## Limitaciones
 

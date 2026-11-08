@@ -38,11 +38,11 @@ id-eventos-apply  Storage Blob Data Contributor  .../storageAccounts/sttfeventos
 Ninguna identidad tiene secretos: GitHub Actions obtiene tokens por OIDC con credenciales federadas.
 
 ```text
-repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:pull_request
-repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:environment:azure-infra
+repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:pull_request              (id-eventos-plan)
+repo:marchelo23/Proyecto-Final-Metricas-y-DevOps:environment:azure-infra   (id-eventos-apply)
 ```
 
-Las credenciales también existen con el formato de IDs inmutables.
+Las credenciales también existen con el formato de IDs inmutables. El bootstrap actualizado agrega `environment:azure-ops`, para `id-eventos-ops` (energía de la VM) y para `id-eventos-plan` (drift programado). Esta evidencia se completará con la salida de `az identity federated-credential list` cuando se ejecute.
 
 **Bloqueo.** Cada `plan` y `apply` muestra `Acquiring state lock` y toma un lease del blob. Un plan cortado por la red dejó el lease tomado: el siguiente plan falló con `state blob is already locked`, que es el comportamiento esperado ante una ejecución concurrente. Se confirmó que no había otra ejecución en curso (sin procesos locales; CI sin configurar) y se liberó con `az storage blob lease break`, sin usar `-lock=false`.
 

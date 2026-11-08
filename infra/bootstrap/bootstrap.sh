@@ -26,6 +26,9 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 SUFFIX="${NAME_SUFFIX:-$(openssl rand -hex 3)}"
+# Guardar el sufijo de inmediato: si el script falla más adelante, el siguiente
+# intento reutiliza los mismos nombres en vez de crear otro Storage.
+[[ -f "$ENV_FILE" ]] || echo "NAME_SUFFIX=${SUFFIX}" > "$ENV_FILE"
 
 RG="rg-eventos-tfstate"
 STORAGE="sttfeventos${SUFFIX}"
@@ -168,7 +171,7 @@ Bootstrap completo. Valores guardados en infra/bootstrap/bootstrap.env (no versi
 
 1. Verificar que infra/terraform/backend.hcl use storage_account_name = "${STORAGE}".
 2. Un administrador del repositorio ${REPO} debe crear:
-     - el environment "${APPLY_ENVIRONMENT}" con revisores requeridos;
+     - el environment "${APPLY_ENVIRONMENT}" con revisores requeridos, limitado a la rama main;
      - el environment "${OPS_ENVIRONMENT}" limitado a la rama main, sin revisores;
    y estas variables de GitHub Actions:
      AZURE_SUBSCRIPTION_ID=${SUBSCRIPTION_ID}

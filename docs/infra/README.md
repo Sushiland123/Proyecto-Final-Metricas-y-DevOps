@@ -52,7 +52,7 @@ El bootstrap crea, fuera de Terraform, el Resource Group `rg-eventos-tfstate` co
 - **AzureRM `4.40.0` fijo.** Es la versión que validó el docente. Su README registra que la API de red `2025-01-01` devolvió `404` para recursos recién creados en `mexicocentral`. Con AzureRM 5.13 ocurrió lo mismo con la VNet (ver *Incidentes*). El cambio de 5.13 a 4.40.0 se verificó con un plan sin diferencias sobre el state existente.
 - **2 vCPU y 8 GB.** El nodo aloja K3s, la API en dos namespaces, PostgreSQL y la observabilidad (Prometheus, Grafana, OpenTelemetry Collector, visor de trazas). Recién instalado, K3s usa unos 1.1 GiB.
 - **Un nodo, sin HA.** El proyecto no exige alta disponibilidad ni tolerancia a la pérdida de la VM. Un reinicio de Pod no equivale a perder la VM.
-- **K3s por cloud-init, con reintentos.** Versión fija `v1.35.2+k3s1`, la misma de la clase. `/usr/local/sbin/k3s-bootstrap.sh` reintenta la instalación hasta 10 veces y espera como máximo 10 minutos a que el nodo esté `Ready`. Si falla, cloud-init termina en `error` en vez de quedarse esperando. El registro queda en `/var/log/k3s-bootstrap.log`. Cambiar la versión o el template **reemplaza la VM** (y los volúmenes `local-path`); el plan lo muestra antes de aplicar.
+- **K3s por cloud-init, con reintentos.** Versión fija `v1.35.2+k3s1`, la misma de la clase. `/usr/local/sbin/k3s-bootstrap.sh` reintenta la instalación hasta 10 veces y espera como máximo 10 minutos a que el nodo esté `Ready`. Si falla, cloud-init termina en `error` en vez de quedarse esperando. El registro queda en `/var/log/k3s-bootstrap.log`. Cambiar la versión o el template **reemplaza la VM** (y los volúmenes `local-path`); el plan lo muestra antes de aplicar. El instalador se descarga por HTTPS desde `get.k3s.io`, como en la plantilla del docente, y verifica el SHA256 del binario contra los checksums de la release. Pendiente para el próximo reemplazo planificado de la VM: fijar `install.sh` a la etiqueta de la versión y comprobar su checksum. Hacerlo ahora obligaría a reemplazar la VM sin otra necesidad.
 - **Apagado diario con GitHub Actions.** `Microsoft.DevTestLab/schedules`, el apagado automático de Azure, no existe en `mexicocentral` (`LocationNotAvailableForResourceType`) y no se puede crear en otra región (`InvalidScheduleLocation`). El workflow [`vm-power.yml`](../../.github/workflows/vm-power.yml) desasigna la VM a las 23:00. También permite a cualquier integrante encenderla o apagarla sin credenciales de Azure.
 - **API de Kubernetes cerrada.** El puerto 6443 no se publica. La administración se hace por SSH con clave (sin contraseña) y un túnel: `ssh -N -L 6443:127.0.0.1:6443 azureuser@<fqdn>`.
 - **DNS y TLS.** La IP tiene una etiqueta DNS de Azure (`<label>.mexicocentral.cloudapp.azure.com`), que sirve de nombre para el Ingress y para el certificado TLS que emita el clúster.
@@ -111,15 +111,15 @@ Workflow [`terraform.yml`](../../.github/workflows/terraform.yml):
 |---|---|---|
 | PR que toca `infra/**` | `fmt -check`, `validate`, `tflint` y **speculative plan**, publicado en el resumen y como artefacto `terraform-plan-pr-<n>` | `id-eventos-plan` |
 | PR desde un fork | Solo `fmt`, `validate` y `tflint`; el plan se omite con un aviso (los forks no reciben token OIDC) | — |
-| Push a `main` con cambios en `infra/terraform/**`, o ejecución manual | `plan -out=tfplan` y `apply tfplan`, **después de la aprobación** del environment `azure-infra` | `id-eventos-apply` |
+| Push a `main` con cambios en `infra/terraform/**`, o ejecución manual **desde `main`** | `plan -out=tfplan` y `apply tfplan`, **después de la aprobación** del environment `azure-infra` | `id-eventos-apply` |
 | Diario a las 08:00 ([`terraform-drift.yml`](../../.github/workflows/terraform-drift.yml)) | `plan -detailed-exitcode` sin aplicar: el job falla si Azure difiere del código | `id-eventos-plan` |
 
-Ningún PR aplica cambios. El apply solo ocurre con código integrado y aprobado, y aplica exactamente el plan guardado. La región, el tamaño y la zona viven en el código (`variables.tf`): cambiarlos exige un PR con su plan.
+Ningún PR ni otra rama aplica cambios. El job exige `github.ref == 'refs/heads/main'`, también con `workflow_dispatch`, y el environment `azure-infra` solo admite `main`. El apply solo ocurre con código integrado y aprobado, y aplica exactamente el plan guardado. La región, el tamaño y la zona viven en el código (`variables.tf`): cambiarlos exige un PR con su plan.
 
 ### Configuración del repositorio (una vez, la hace un administrador)
 
 1. **Settings → Environments:**
-   - `azure-infra` → *Required reviewers* (al menos un integrante distinto de quien hizo el cambio). Crearlo con revisores **antes** de definir `APPLY_CLIENT_ID`.
+   - `azure-infra` → *Required reviewers* (al menos un integrante distinto de quien hizo el cambio) y *Deployment branches and tags*: solo `main`. Crearlo así **antes** de definir `APPLY_CLIENT_ID`.
    - `azure-ops` → *Deployment branches and tags*: solo `main`. Sin revisores, para que el apagado y el drift programados no esperen aprobación. Sus dos identidades no pueden crear ni modificar recursos.
 2. **Settings → Secrets and variables → Actions:**
 

@@ -60,10 +60,15 @@ variable "admin_cidrs" {
   sensitive = true
 
   validation {
+    # Solo IPv4 con prefijo /24 o más estrecho: también rechaza rangos abiertos
+    # como 0.0.0.0/1. try() evita errores con entradas mal formadas.
     condition = length(var.admin_cidrs) > 0 && alltrue([
-      for cidr in var.admin_cidrs : can(cidrhost(cidr, 0)) && !contains(["0.0.0.0/0", "*"], cidr)
+      for cidr in var.admin_cidrs :
+      can(regex("^([0-9]{1,3}[.]){3}[0-9]{1,3}/[0-9]{1,2}$", cidr)) &&
+      can(cidrhost(cidr, 0)) &&
+      try(tonumber(split("/", cidr)[1]) >= 24, false)
     ])
-    error_message = "admin_cidrs debe contener rangos CIDR válidos y nunca 0.0.0.0/0."
+    error_message = "admin_cidrs debe contener rangos IPv4 de /24 o más estrechos (por ejemplo la IP del administrador con /32)."
   }
 }
 

@@ -38,8 +38,14 @@ Las alertas de presupuesto de Azure **notifican pero no detienen recursos**. Una
 
 ## Cargos observados
 
-Registrar los cargos acumulados desde **Cost Management → Cost analysis**, agrupados por Resource Group, al menos antes de cada entrega y antes de la defensa. Los cargos tardan hasta 24 horas en aparecer.
+El límite es el **consumo agregado** de la suscripción, no el de un mes. El presupuesto de Terraform es mensual y se reinicia cada mes: no alerta si el gasto de varios meses suma más de US$100. Por eso, **cada semana** y antes de cada entrega y de la defensa, se registra:
 
-| Fecha | Acumulado del mes (suscripción) | `rg-eventos-*` | Observaciones |
-|---|---|---|---|
-| — | — | — | Primer despliegue en `mexicocentral` el 2026-11-08; registrar el 2026-11-09 |
+- el acumulado del mes y el acumulado desde el inicio del proyecto (2026-10-20), en **Cost Management → Cost analysis**, agrupado por Resource Group (incluye los recursos del Laboratorio 4 mientras existan);
+- el crédito restante de Azure for Students que muestra el portal;
+- el saldo hasta el límite: US$100 − acumulado del proyecto.
+
+Los cargos tardan hasta 24 horas en aparecer.
+
+| Fecha | Mes (suscripción) | Acumulado del proyecto | `rg-eventos-*` | Crédito restante | Saldo hasta US$100 | Observaciones |
+|---|---|---|---|---|---|---|
+| — | — | — | — | — | — | Primer despliegue en `mexicocentral` el 2026-11-08; primer registro el 2026-11-09 |

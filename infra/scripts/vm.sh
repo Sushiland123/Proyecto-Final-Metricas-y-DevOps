@@ -9,8 +9,12 @@ set -euo pipefail
 export MSYS_NO_PATHCONV=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# shellcheck disable=SC1090
-source "$ROOT/infra/bootstrap/bootstrap.env"
+# bootstrap.env no se versiona: quien no ejecutó el bootstrap define NAME_SUFFIX.
+if [[ -f "$ROOT/infra/bootstrap/bootstrap.env" ]]; then
+  # shellcheck disable=SC1090
+  source "$ROOT/infra/bootstrap/bootstrap.env"
+fi
+: "${NAME_SUFFIX:?Definir NAME_SUFFIX (el sufijo de sttfeventos<sufijo> en infra/terraform/backend.hcl) o ejecutar infra/bootstrap/bootstrap.sh}"
 RG="rg-eventos-${NAME_SUFFIX}"
 VM="vm-eventos-${NAME_SUFFIX}-k3s"
 

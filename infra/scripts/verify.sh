@@ -13,11 +13,13 @@ FAILS=0
 ok() { printf '  OK     %s\n' "$*"; }
 fail() { printf '  FALLA  %s\n' "$*"; FAILS=$((FAILS + 1)); }
 
-FQDN="$(terraform -chdir="$ROOT/infra/terraform" output -raw public_fqdn 2>/dev/null)" || {
-  echo "No hay outputs de Terraform: ejecutar terraform init y apply primero." >&2
+FQDN="$(terraform -chdir="$ROOT/infra/terraform" output -raw public_fqdn 2>/dev/null)"
+IP="$(terraform -chdir="$ROOT/infra/terraform" output -raw public_ip 2>/dev/null)"
+# Sin estos valores, las pruebas de red darían falsos positivos (por ejemplo, 6443 "cerrado").
+if [[ -z "$FQDN" || -z "$IP" ]]; then
+  echo "No hay outputs de Terraform (public_fqdn, public_ip): ejecutar terraform init y apply primero." >&2
   exit 1
-}
-IP="$(terraform -chdir="$ROOT/infra/terraform" output -raw public_ip)"
+fi
 echo "Ambiente: ${FQDN} (${IP})"
 
 state="$(bash "$ROOT/infra/scripts/vm.sh" status)"

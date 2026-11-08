@@ -50,6 +50,8 @@ jobs:
       TF_VAR_budget_contact_emails: ${{ secrets.INFRA_BUDGET_CONTACT_EMAILS }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: hashicorp/setup-terraform@v3
         with:
