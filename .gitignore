@@ -38,3 +38,9 @@ target/
 Thumbs.db
 .idea/
 .vscode/
+
+# Infraestructura (valores locales y generados)
+*.tfvars
+!*.tfvars.example
+tfplan
+infra/bootstrap/bootstrap.env

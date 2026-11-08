@@ -1,0 +1,21 @@
+#cloud-config
+# Instalación automatizada de K3s (servidor único) en el primer arranque de la VM.
+package_update: true
+packages:
+  - curl
+  - jq
+
+write_files:
+  - path: /etc/rancher/k3s/config.yaml
+    permissions: "0600"
+    content: |
+      write-kubeconfig-mode: "0600"
+      node-name: k3s-eventos
+
+runcmd:
+  - curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
+  - INSTALL_K3S_VERSION="${k3s_version}" sh /tmp/k3s-install.sh
+  - until /usr/local/bin/k3s kubectl get nodes 2>/dev/null | grep -q " Ready "; do sleep 5; done
+  - install -d -m 0700 -o ${admin_username} -g ${admin_username} /home/${admin_username}/.kube
+  - install -m 0600 -o ${admin_username} -g ${admin_username} /etc/rancher/k3s/k3s.yaml /home/${admin_username}/.kube/config
+  - /usr/local/bin/k3s kubectl get nodes -o wide > /var/log/k3s-bootstrap.log
