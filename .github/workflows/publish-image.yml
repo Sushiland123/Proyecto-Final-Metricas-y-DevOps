@@ -1,0 +1,129 @@
+name: Publicar imagen
+
+# DEV-04: construye una sola vez y publica en GHCR desde main o desde un tag vX.Y.Z.
+# No se dispara con pull_request, así que un PR nunca publica ni recibe estos permisos.
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # GITHUB_TOKEN caduca al terminar el job: no hay credenciales de larga duración.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # sha-<corto> en cada publicación y X.Y.Z en los tags. Sin latest: se despliega por digest.
+      - name: Calcular tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/event-service
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=semver,pattern={{version}}
+
+      - name: Construir y publicar
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Obtener la referencia inmutable
+        id: ref
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # metadata-action entrega el nombre en minúsculas, como exige el registro.
+          tag="$(jq -r '.tags[0]' <<<"$DOCKER_METADATA_OUTPUT_JSON")"
+          name="${tag%:*}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "image=$name@$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # Se verifican los bytes publicados. Sin este paso no hay attestation ni registro,
+      # y la entrega solo promueve digests que tengan ambos.
+      - name: Verificar la imagen publicada
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}
+        run: |
+          docker pull "$IMAGE"
+          revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")"
+          if [[ "$revision" != "$GITHUB_SHA" ]]; then
+            echo "::error::La imagen declara la revisión $revision y el commit es $GITHUB_SHA"
+            exit 1
+          fi
+          bash scripts/verify-image.sh "$IMAGE"
+
+      - name: Firmar la procedencia
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.ref.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Comprobar la attestation
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY"
+
+      - name: Registrar commit, workflow e imagen
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          tags="$(jq -c '.tags' <<<"$DOCKER_METADATA_OUTPUT_JSON")"
+          jq -n --arg commit "$GITHUB_SHA" --arg ref "$GITHUB_REF" --arg run "$RUN_URL" \
+            --arg image "$IMAGE" --arg digest "$DIGEST" --argjson tags "$tags" \
+            '{commit: $commit, ref: $ref, workflow_run: $run, image: $image, digest: $digest, tags: $tags}' \
+            > artifacts/image/publicacion.json
+          {
+            echo "### Imagen publicada"
+            echo
+            echo "| Campo | Valor |"
+            echo "|---|---|"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| Workflow | $RUN_URL |"
+            echo "| Imagen | \`$IMAGE\` |"
+            echo "| Tags | \`$tags\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-publication-${{ github.sha }}
+          path: artifacts/image/
+          retention-days: 90
