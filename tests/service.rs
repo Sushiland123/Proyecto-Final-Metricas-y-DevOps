@@ -138,6 +138,7 @@ async fn dependency_recovers_without_rebuilding_app() {
     let app = api::router(AppState {
         settings: Arc::new(support::settings()),
         service: EventService::new(repository.clone()),
+        scenario: None,
     });
     support::assert_error(
         &support::request(&app, "GET", "/health/ready", None, None).await,

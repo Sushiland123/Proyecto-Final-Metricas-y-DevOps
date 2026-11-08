@@ -7,6 +7,7 @@ pub mod domain;
 pub mod error;
 pub mod postgres;
 pub mod repository;
+pub mod scenario;
 pub mod service;
 
 /// Versioned, embedded migrations shared by the CLI and integration tests.

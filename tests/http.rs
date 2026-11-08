@@ -229,7 +229,7 @@ async fn generated_openapi_documents_all_routes_and_security() {
     let app = app(settings());
     let response = request(&app, "GET", "/openapi.json", None, None).await;
     assert_eq!(response.0, 200);
-    assert_eq!(response.1["paths"].as_object().unwrap().len(), 8);
+    assert_eq!(response.1["paths"].as_object().unwrap().len(), 18);
     assert_eq!(
         response.1["components"]["securitySchemes"]["api_key"]["name"],
         "X-API-Key"

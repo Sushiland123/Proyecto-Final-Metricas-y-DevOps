@@ -186,6 +186,71 @@ async fn main() -> Result<()> {
         return Err("event not created".into());
     }
     let original: Value = response.json().await?;
+    // ESC3 durability includes device configuration, pending inbox, completed work,
+    // rejection receipts and business alerts, not just the legacy events table.
+    let device = format!("esc3-{}", Uuid::new_v4().simple());
+    client.post(format!("{base}/v1/devices")).header("X-API-Key", &producer)
+        .json(&json!({"id":device,"facility_id":"restart-test","limits":{"temperature_min":0,"temperature_max":30,"humidity_min":0,"humidity_max":100}}))
+        .send().await?.error_for_status()?;
+    let mut esc3_receipts = Vec::new();
+    for n in 0..2 {
+        let receipt: Value = client.post(format!("{base}/v1/readings")).header("X-API-Key", &producer)
+            .json(&json!({"device_id":device,"event_id":format!("e-{n}"),"occurred_at":"2040-01-01T00:00:00Z","temperature":40,"humidity":50,"state":"running"}))
+            .send().await?.error_for_status()?.json().await?;
+        esc3_receipts.push(receipt["id"].as_str().ok_or("missing receipt")?.to_owned());
+    }
+    let store = event_service::scenario::store::Store {
+        pool: repository.pool().map_err(|_| "missing pool")?.clone(),
+    };
+    if store
+        .process(1)
+        .await
+        .map_err(|_| "ESC3 processing failed")?
+        != 1
+    {
+        return Err("expected one processed reading".into());
+    }
+    let rejected = client
+        .post(format!("{base}/v1/readings"))
+        .header("X-API-Key", &producer)
+        .json(&json!({"device_id":device}))
+        .send()
+        .await?;
+    if rejected.status() != StatusCode::UNPROCESSABLE_ENTITY {
+        return Err("expected durable rejection".into());
+    }
+    let rejected: Value = rejected.json().await?;
+    esc3_receipts.push(
+        rejected["id"]
+            .as_str()
+            .ok_or("missing rejection receipt")?
+            .to_owned(),
+    );
+    let period = "from=2040-01-01T00:00:00Z&to=2040-01-02T00:00:00Z";
+    let mut esc3_paths = vec![
+        format!("/v1/devices/{device}"),
+        format!("/v1/devices/{device}/readings?{period}"),
+        format!("/v1/devices/{device}/statistics?{period}"),
+        format!("/v1/devices/{device}/alerts?{period}"),
+        format!("/v1/reception/counts?device_id={device}"),
+        format!("/v1/rejections?device_id={device}"),
+    ];
+    for id in esc3_receipts {
+        esc3_paths.push(format!("/v1/receipts/{id}"));
+    }
+    let mut esc3_before = Vec::new();
+    for path in &esc3_paths {
+        esc3_before.push(
+            client
+                .get(format!("{base}{path}"))
+                .header("X-API-Key", &analyst)
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Value>()
+                .await?,
+        );
+    }
     let marker = format!("sensitive-test-{}", Uuid::new_v4().simple());
     let mut duplicate = input.clone();
     duplicate["payload"] = json!({"secret": marker});
@@ -283,6 +348,39 @@ async fn main() -> Result<()> {
         return Err("summary does not reflect durable event".into());
     }
     println!("PASS: event {id} persisted after API + PostgreSQL restart");
+    for (path, before) in esc3_paths.iter().zip(&esc3_before) {
+        let after: Value = client
+            .get(format!("{base}{path}"))
+            .header("X-API-Key", &analyst)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if &after != before {
+            return Err("ESC3 durable state changed after API + PostgreSQL restart".into());
+        }
+    }
+    let recovered = store
+        .counters(Some(&device))
+        .await
+        .map_err(|_| "ESC3 counters failed")?;
+    if recovered.processed != 1 || recovered.pending != 1 || recovered.rejected != 1 {
+        return Err("ESC3 restart counters mismatch".into());
+    }
+    store.process(100).await.map_err(|_| "ESC3 drain failed")?;
+    if store
+        .counters(Some(&device))
+        .await
+        .map_err(|_| "ESC3 counters failed")?
+        .pending
+        != 0
+    {
+        return Err("ESC3 backlog did not drain".into());
+    }
+    println!(
+        "PASS: ESC3 devices, limits, readings, rejection receipts, alerts and pending work survived API + PostgreSQL restart; backlog drained to zero"
+    );
     let logs = std::fs::read_to_string("artifacts/system-api.log")?;
     if [
         producer.as_str(),

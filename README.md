@@ -1,8 +1,10 @@
 # Proyecto Final — Métricas y DevOps · Rust
 
-Plataforma de **ingesta y análisis de eventos (Escenario 3, COM-01…06)** implementada íntegramente en **Rust**, con **Axum, Tokio, SQLx y PostgreSQL 16**. Servicio, pruebas y herramientas de verificación bajo Cargo; un binario, un monolito modular y persistencia transaccional.
+Plataforma de **ingesta y análisis de eventos (Escenario 3, COM-01…06)** implementada íntegramente en **Rust**, con **Axum, Tokio, SQLx y PostgreSQL 16**. Un binario con API y procesador independiente, inbox durable y persistencia transaccional.
 
 - Repositorio: <https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps>
+- **Escenario 3 específico:** dispositivos por instalación, lecturas tipadas, rechazos auditables, alertas configurables, contadores consistentes, backlog y generador reproducible. [Contrato, pruebas y comandos](docs/escenario.md).
+- La API genérica `/v1/events` se conserva por compatibilidad y no alimenta el procesamiento ni los contadores ESC3. Para el escenario usar `/v1/readings` y `/v1/devices`.
 - Ingesta individual y en lotes atómicos de 1–100 eventos; deduplicación `(source, external_id)`.
 - Consulta por UUID, listado paginado con filtros y ventanas UTC semiabiertas `[from, to)`.
 - Conteos por tipo/fuente, series `minute|hour|day` y estadísticas sobre campos numéricos JSONB.
@@ -34,6 +36,8 @@ export TEST_DATABASE_URL="$DATABASE_URL"
 docker compose up -d --wait postgres
 cargo run --locked -- migrate
 cargo run --locked -- serve
+# En otra terminal con el mismo entorno: procesador ESC3 independiente.
+# cargo run --locked -- process
 ```
 
 API en `http://127.0.0.1:8000`. Para Podman, sustituir `docker compose` por el proveedor Compose instalado. Si no admite `--wait`, esperar con `pg_isready` antes de migrar. Las credenciales deben estar disponibles también al ejecutar comandos en otra terminal. Usar contraseñas URL-encoded si contienen caracteres reservados; los secretos hexadecimales del ejemplo no los necesitan.
@@ -95,7 +99,7 @@ docker compose --profile app run --rm api migrate
 docker compose --profile app up -d api
 ```
 
-Imagen multi-stage sobre distroless, sin shell, con usuario no root, puerto 8000 y migraciones SQL embebidas. No incluir secretos en la imagen. Compose usa la red interna para PostgreSQL. En Kubernetes, ejecutar `event-service migrate` como Job antes del despliegue y configurar probes HTTP. Verificación local: `bash scripts/verify-image.sh <imagen>` y `bash scripts/scan-secrets.sh` ([DEV-02](docs/evidencia/DEV-02/index.md)). **La publicación de imágenes y el despliegue en K3s siguen siendo trabajo pendiente del backlog**; el Dockerfile no acredita un despliegue en la nube.
+Imagen multi-stage sobre distroless, sin shell, con usuario no root, puerto 8000 y migraciones SQL embebidas. No incluir secretos en la imagen. Compose usa la red interna para PostgreSQL. El mismo ejecutable admite `serve`, `process` y `drain`; el procesador debe ejecutarse por separado. Verificación local: `bash scripts/verify-image.sh <imagen>` y `bash scripts/scan-secrets.sh` ([DEV-02](docs/evidencia/DEV-02/index.md)). **Infraestructura Azure/K3s y Terraform** incorporada en el [PR #40](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/pull/40): [guía](docs/infra/README.md). Publicación de imágenes y despliegue de aplicación siguen pendientes de C; observabilidad corresponde a D. El Dockerfile no acredita un despliegue en la nube.
 
 ## Configuración
 
