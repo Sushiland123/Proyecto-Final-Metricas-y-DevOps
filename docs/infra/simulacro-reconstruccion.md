@@ -10,7 +10,17 @@
 
 ## Prerrequisitos
 
-- Suscripción Azure for Students activa, con sesión de su dueño (Owner): `az login` y `az account show --query "{id:id,name:name}" -o table`.
+- Suscripción Azure for Students **propia** y activa, con sesión de su dueño (Owner). No debe ser la del ambiente compartido ni tener ya un bootstrap de este proyecto:
+
+  ```powershell
+  az login
+  az account list --query "[].{id:id,name:name}" -o table
+  az account set --subscription <ID de la suscripción propia>
+  az account show --query "{id:id,name:name}" -o table
+  az group exists --name rg-eventos-tfstate      # debe ser false; si es true, DETENERSE
+  ```
+
+  `bootstrap.sh` reutiliza `rg-eventos-tfstate` y las identidades, porque sus nombres son fijos. Si ese grupo ya existe, el simulacro se mezclaría con otro bootstrap. `teardown.sh` se niega a borrar un grupo que contiene el state de otro bootstrap, pero el simulacro no debe llegar a ese punto.
 - Herramientas en Windows:
   - Git for Windows (Git Bash, `openssl`);
   - Azure CLI;
@@ -121,7 +131,7 @@ Si se borrara solo el Resource Group, quedarían asignaciones huérfanas en la s
 
 ## Registro de resultados
 
-Copiar esta tabla en `docs/evidencia/DEV-13/` (o en un comentario del issue #19), sin IDs de suscripción ni IPs:
+Copiar esta tabla en `docs/evidencia/DEV-13/` (o en un comentario del issue #19), sin IDs de suscripción ni IPs. `verify.sh` imprime la IP pública en la primera línea: reemplazarla antes de pegar.
 
 | Paso | Inicio | Fin | Resultado | Observaciones |
 |---|---|---|---|---|
@@ -129,7 +139,7 @@ Copiar esta tabla en `docs/evidencia/DEV-13/` (o en un comentario del issue #19)
 | 2. Bootstrap | | | | sufijo: |
 | 3. Variables | | | | |
 | 4. Plan y apply | | | `Plan: … to add` / `Apply complete! …` | zona usada: |
-| 5. `verify.sh` | | | `Ambiente verificado.` (pegar la salida) | |
+| 5. `verify.sh` | | | `Ambiente verificado.` (pegar la salida con la IP de la primera línea reemplazada por `<IP>`) | |
 | 6. Destroy y teardown | | | `false` / `false` | |
 
 Integrante que lo ejecutó, fecha y versión del repositorio (`git rev-parse --short HEAD`). Anotar también dónde la documentación no fue suficiente: es el objetivo del simulacro.

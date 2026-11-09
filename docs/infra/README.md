@@ -226,10 +226,10 @@ Eliminar la plataforma (los datos de los volúmenes del clúster se pierden):
 cd infra/terraform && ARM_USE_CLI=true terraform plan -destroy   # revisar
 ARM_USE_CLI=true terraform destroy
 az group exists --name rg-eventos-<sufijo>                       # false
-bash infra/bootstrap/teardown.sh   # solo al cerrar el proyecto: elimina el state, las identidades y sus permisos
+bash ../bootstrap/teardown.sh      # solo al cerrar el proyecto: elimina el state, las identidades y sus permisos
 ```
 
-`teardown.sh` elimina también las asignaciones de rol en la suscripción y el rol personalizado. Borrar solo `rg-eventos-tfstate` las dejaría huérfanas. Pide escribir el sufijo para confirmar.
+`teardown.sh` elimina también las asignaciones de rol en la suscripción y el rol personalizado. Borrar solo `rg-eventos-tfstate` las dejaría huérfanas. Pide escribir el sufijo para confirmar y se detiene sin borrar nada en tres casos: si la sesión de `az` está en otra suscripción, si la plataforma aún existe o si el Resource Group contiene el state de otro bootstrap.
 
 Simulacro de reconstrucción desde cero por otro integrante, en su propia suscripción: [simulacro-reconstruccion.md](simulacro-reconstruccion.md).
 
