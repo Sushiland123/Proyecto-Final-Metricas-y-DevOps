@@ -1,0 +1,95 @@
+"""Offline contract checks, not a substitute for Kubernetes server dry-run."""
+
+import importlib.util
+from pathlib import Path
+import unittest
+
+
+SPEC = importlib.util.spec_from_file_location(
+    "render_k8s", Path(__file__).resolve().parents[1] / "render-k8s.py"
+)
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+IMAGE = MODULE.APP + "@sha256:" + "a" * 64
+POSTGRES = MODULE.POSTGRES + "@sha256:" + "b" * 64
+
+
+class RenderTests(unittest.TestCase):
+    def stage(self, stage, environment="development"):
+        return MODULE.render(environment, stage, IMAGE, POSTGRES)["items"]
+
+    def test_namespaces_are_explicit_and_isolated(self):
+        for environment in ("development", "production"):
+            for stage in ("foundation", "migration", "workloads"):
+                for item in self.stage(stage, environment):
+                    if item["kind"] == "Namespace":
+                        self.assertEqual(item["metadata"]["name"], f"eventos-{environment}")
+                    else:
+                        self.assertEqual(item["metadata"]["namespace"], f"eventos-{environment}")
+
+    def test_floating_images_foreign_repositories_and_bad_digests_fail(self):
+        for invalid in ("latest", MODULE.APP + ":sha-abc", IMAGE + ":tag", IMAGE[:-1], IMAGE.replace("ghcr.io", "evil.invalid")):
+            with self.subTest(image=invalid), self.assertRaises(ValueError):
+                MODULE.render("development", "workloads", invalid, POSTGRES)
+        with self.assertRaises(ValueError):
+            MODULE.render("development", "workloads", IMAGE, "postgres:16")
+        with self.assertRaises(ValueError):
+            MODULE.render("unknown", "workloads", IMAGE, POSTGRES)
+        with self.assertRaises(ValueError):
+            MODULE.render("development", "all", IMAGE, POSTGRES)
+
+    def test_explicit_migration_uses_same_digest_without_runtime_keys(self):
+        job = self.stage("migration")[0]
+        self.assertEqual(job["spec"]["backoffLimit"], 0)
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(container["image"], IMAGE)
+        self.assertEqual(container["args"], ["migrate"])
+        self.assertNotIn("envFrom", container)
+        self.assertEqual(container["env"][0]["valueFrom"]["secretKeyRef"]["name"], "event-service-migration")
+
+    def test_api_and_worker_are_separate_and_service_selects_only_api(self):
+        service, api, worker = self.stage("workloads")
+        self.assertEqual(service["spec"]["type"], "ClusterIP")
+        for deployment, command in ((api, "serve"), (worker, "process")):
+            container = deployment["spec"]["template"]["spec"]["containers"][0]
+            self.assertEqual(container["image"], IMAGE)
+            self.assertEqual(container["args"], [command])
+            self.assertNotIn("initContainers", deployment["spec"]["template"]["spec"])
+        self.assertEqual(service["spec"]["selector"], api["spec"]["selector"]["matchLabels"])
+        self.assertNotEqual(service["spec"]["selector"], worker["spec"]["selector"]["matchLabels"])
+        worker_container = worker["spec"]["template"]["spec"]["containers"][0]
+        self.assertNotIn("livenessProbe", worker_container)
+        self.assertNotIn("readinessProbe", worker_container)
+        self.assertEqual([entry["name"] for entry in worker_container["env"]], ["DATABASE_URL"])
+
+    def test_database_data_outlives_pod_and_has_no_public_service(self):
+        foundation = self.stage("foundation")
+        db = next(item for item in foundation if item["kind"] == "StatefulSet")
+        self.assertEqual(db["spec"]["volumeClaimTemplates"][0]["spec"]["storageClassName"], "local-path")
+        self.assertEqual(db["spec"]["persistentVolumeClaimRetentionPolicy"]["whenDeleted"], "Retain")
+        service = next(item for item in foundation if item["kind"] == "Service")
+        self.assertNotIn("nodePort", service["spec"]["ports"][0])
+        self.assertEqual(service["spec"]["clusterIP"], "None")
+
+    def test_nonroot_no_tokens_capabilities_and_resource_bounds(self):
+        for stage in ("foundation", "migration", "workloads"):
+            for item in self.stage(stage):
+                if item["kind"] not in ("StatefulSet", "Deployment", "Job"):
+                    continue
+                pod = item["spec"]["template"]["spec"]
+                self.assertFalse(pod["automountServiceAccountToken"])
+                self.assertTrue(pod["securityContext"]["runAsNonRoot"])
+                for container in pod["containers"]:
+                    self.assertFalse(container["securityContext"]["allowPrivilegeEscalation"])
+                    self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
+                    self.assertEqual(container["securityContext"]["capabilities"]["drop"], ["ALL"])
+                    self.assertEqual(set(container["resources"]), {"requests", "limits"})
+
+    def test_api_liveness_does_not_restart_on_database_outage(self):
+        api = self.stage("workloads")[1]["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(api["livenessProbe"]["httpGet"]["path"], "/health/live")
+        self.assertEqual(api["readinessProbe"]["httpGet"]["path"], "/health/ready")
+
+
+if __name__ == "__main__":
+    unittest.main()
