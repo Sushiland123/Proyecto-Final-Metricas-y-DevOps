@@ -1,0 +1,48 @@
+{
+  "captured_at": "2026-11-09T00:25:54.063073+00:00",
+  "repository": "marchelo23/Proyecto-Final-Metricas-y-DevOps",
+  "description": "Resumen de campos de la auditoría de solo lectura; no se intentó un merge.",
+  "protection": {
+    "required_status_checks": {
+      "strict": true,
+      "checks": [
+        {"context": "quality", "app_id": 15368},
+        {"context": "postgres", "app_id": 15368},
+        {"context": "container", "app_id": 15368},
+        {"context": "secrets", "app_id": 15368}
+      ]
+    },
+    "required_pull_request_reviews": {
+      "dismiss_stale_reviews": true,
+      "require_code_owner_reviews": true,
+      "require_last_push_approval": false,
+      "required_approving_review_count": 1
+    },
+    "required_conversation_resolution": {"enabled": true},
+    "enforce_admins": {"enabled": false}
+  },
+  "negative_control": {
+    "number": 59,
+    "url": "https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/pull/59",
+    "headRefOid": "8e71c833e1aa355464098613940e92da69e7118f",
+    "baseRefName": "main",
+    "isDraft": false,
+    "state": "OPEN",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "BLOCKED",
+    "statusCheckRollup": [
+      {"name": "quality", "status": "COMPLETED", "conclusion": "FAILURE"},
+      {"name": "postgres", "status": "COMPLETED", "conclusion": "SUCCESS"},
+      {"name": "container", "status": "COMPLETED", "conclusion": "SUCCESS"},
+      {"name": "secrets", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    ],
+    "workflow_run": "https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/actions/runs/42539969287"
+  },
+  "passed": true,
+  "errors": [],
+  "limitations": [
+    "La revisión humana también puede contribuir al bloqueo.",
+    "Los administradores conservan la excepción existente.",
+    "No acredita revisión humana independiente ni defensa académica."
+  ]
+}
