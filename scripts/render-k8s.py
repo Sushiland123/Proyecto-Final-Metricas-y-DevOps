@@ -13,17 +13,21 @@ APP = "ghcr.io/marchelo23/proyecto-final-metricas-y-devops/event-service"
 POSTGRES = "docker.io/library/postgres"
 
 
-def render(environment, stage, image, postgres_image):
+def render(environment, stage, image, postgres_image, public_host=None):
     if environment not in {"development", "production"}:
         raise ValueError("unknown environment")
-    if stage not in {"foundation", "migration", "workloads"}:
+    if stage not in {"foundation", "migration", "workloads", "ingress"}:
         raise ValueError("unknown stage; render and apply each stage in order")
     for value, repository in ((image, APP), (postgres_image, POSTGRES)):
         if not re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", value):
             raise ValueError("only approved repositories with immutable sha256 digests are accepted")
+    if stage == "ingress" and environment != "production":
+        raise ValueError("only production is exposed publicly")
+    if stage == "ingress" and not re.fullmatch(r"eventos-[a-z0-9]+\.mexicocentral\.cloudapp\.azure\.com", public_host or ""):
+        raise ValueError("ingress requires the public host of the platform")
     namespace = f"eventos-{environment}"
     replacements = {
-        "$NAMESPACE": namespace, "$IMAGE": image, "$POSTGRES_IMAGE": postgres_image,
+        "$NAMESPACE": namespace, "$IMAGE": image, "$POSTGRES_IMAGE": postgres_image, "$PUBLIC_HOST": public_host,
         "$MIGRATION_JOB": "event-service-migrate-" + image.rsplit(":", 1)[1][:16],
         "$POSTGRES_INIT_SCRIPT": (ROOT / "kubernetes/postgres-init.sh").read_text(encoding="utf-8"),
     }
@@ -50,13 +54,14 @@ def render(environment, stage, image, postgres_image):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--environment", required=True, choices=["development", "production"])
-    parser.add_argument("--stage", required=True, choices=["foundation", "migration", "workloads"])
+    parser.add_argument("--stage", required=True, choices=["foundation", "migration", "workloads", "ingress"])
     parser.add_argument("--image", required=True)
     parser.add_argument("--postgres-image", required=True)
+    parser.add_argument("--public-host")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
-        encoded = json.dumps(render(args.environment, args.stage, args.image, args.postgres_image), indent=2) + "\n"
+        encoded = json.dumps(render(args.environment, args.stage, args.image, args.postgres_image, args.public_host), indent=2) + "\n"
         if args.output:
             args.output.write_text(encoded, encoding="utf-8")
         else:

@@ -119,6 +119,17 @@ class RenderTests(unittest.TestCase):
             self.assertNotIn("delete", rule["verbs"])
         self.assertFalse(any(item["kind"].startswith("Cluster") for item in foundation))
 
+    def test_only_production_is_exposed_and_only_over_tls(self):
+        host = "eventos-abc123.mexicocentral.cloudapp.azure.com"
+        with self.assertRaises(ValueError):
+            MODULE.render("development", "ingress", IMAGE, POSTGRES, host)
+        for invalid in (None, "evil.example.com", host + ".evil.example.com"):
+            with self.subTest(host=invalid), self.assertRaises(ValueError):
+                MODULE.render("production", "ingress", IMAGE, POSTGRES, invalid)
+        items = MODULE.render("production", "ingress", IMAGE, POSTGRES, host)["items"]
+        ingress = next(item for item in items if item["kind"] == "Ingress")
+        self.assertEqual(ingress["spec"]["tls"][0]["hosts"], [host])
+        self.assertEqual(ingress["metadata"]["annotations"]["traefik.ingress.kubernetes.io/router.entrypoints"], "websecure")
 
 if __name__ == "__main__":
     unittest.main()

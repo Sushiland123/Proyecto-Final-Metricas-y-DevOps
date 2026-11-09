@@ -1,0 +1,120 @@
+name: Entrega controlada
+
+# DEV-05: promueve un digest ya publicado desde main: development → smoke → aprobación → production.
+# Nunca reconstruye la imagen. Solo se lanza a mano desde main, así que un PR no puede desplegar.
+# Se dispara a mano y no con cada push porque la VM pasa apagada la mayor parte del tiempo.
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit de main ya publicado (40 caracteres)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deliver
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+      packages: read
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Localizar y verificar la imagen del commit
+        id: image
+        env:
+          COMMIT: ${{ inputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! grep -Eq '^[0-9a-f]{40}$' <<<"$COMMIT"; then
+            echo "::error::El commit debe tener 40 caracteres hexadecimales."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$COMMIT" origin/main; then
+            echo "::error::El commit no pertenece a main."
+            exit 1
+          fi
+          run_id="$(gh run list --workflow publish-image.yml --commit "$COMMIT" --event push \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          if [[ -z "$run_id" ]]; then
+            echo "::error::No hay una publicación correcta para ese commit."
+            exit 1
+          fi
+          gh run download "$run_id" --name "image-publication-$COMMIT" --dir "$RUNNER_TEMP/publicacion"
+          image="$(jq -r .image "$RUNNER_TEMP/publicacion/publicacion.json")"
+
+          # La firma, y no el artefacto, es lo que vincula el digest con este repositorio y commit.
+          gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish-image.yml" \
+            --format json > "$RUNNER_TEMP/attestation.json"
+          signed="$(jq -r '.[0].verificationResult.statement.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit' "$RUNNER_TEMP/attestation.json")"
+          if [[ "$signed" != "$COMMIT" ]]; then
+            echo "::error::La firma corresponde al commit $signed, no al solicitado."
+            exit 1
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Versión a entregar"
+            echo "| Commit | Publicación | Imagen |"
+            echo "|---|---|---|"
+            echo "| \`$COMMIT\` | $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id | \`$image\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  development:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: development
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/k8s-deliver
+        with:
+          environment: development
+          image: ${{ needs.resolve.outputs.image }}
+          client-id: ${{ vars.DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          name-suffix: ${{ vars.INFRA_NAME_SUFFIX }}
+
+  # El environment production exige la aprobación de un revisor antes de iniciar este job.
+  production:
+    needs: [resolve, development]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/k8s-deliver
+        with:
+          environment: production
+          image: ${{ needs.resolve.outputs.image }}
+          client-id: ${{ vars.DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          name-suffix: ${{ vars.INFRA_NAME_SUFFIX }}

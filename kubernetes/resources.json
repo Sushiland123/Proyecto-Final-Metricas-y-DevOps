@@ -191,5 +191,48 @@
         }
       }
     }
+  ],
+  "ingress": [
+    {
+      "apiVersion": "cert-manager.io/v1", "kind": "Issuer",
+      "metadata": {"name": "letsencrypt"},
+      "spec": {"acme": {
+        "server": "https://acme-v02.api.letsencrypt.org/directory",
+        "privateKeySecretRef": {"name": "letsencrypt-account"},
+        "solvers": [{"http01": {"ingress": {"ingressClassName": "traefik"}}}]
+      }}
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
+      "metadata": {
+        "name": "event-service",
+        "annotations": {
+          "cert-manager.io/issuer": "letsencrypt",
+          "traefik.ingress.kubernetes.io/router.entrypoints": "websecure",
+          "traefik.ingress.kubernetes.io/router.tls": "true"
+        }
+      },
+      "spec": {
+        "ingressClassName": "traefik",
+        "tls": [{"hosts": ["$PUBLIC_HOST"], "secretName": "event-service-tls"}],
+        "rules": [{"host": "$PUBLIC_HOST", "http": {"paths": [{"path": "/", "pathType": "Prefix", "backend": {"service": {"name": "event-service", "port": {"name": "http"}}}}]}}]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+      "metadata": {"name": "api-from-traefik"},
+      "spec": {
+        "podSelector": {"matchLabels": {"app.kubernetes.io/component": "api"}}, "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}], "ports": [{"protocol": "TCP", "port": 8000}]}]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+      "metadata": {"name": "acme-solver-from-traefik"},
+      "spec": {
+        "podSelector": {"matchLabels": {"acme.cert-manager.io/http01-solver": "true"}}, "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}}}], "ports": [{"protocol": "TCP", "port": 8089}]}]
+      }
+    }
   ]
 }

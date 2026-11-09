@@ -1,0 +1,60 @@
+name: Entregar a K3s
+description: Ejecuta en la VM la entrega de un digest a un ambiente, mediante Azure Run Command.
+
+inputs:
+  environment:
+    description: development o production
+    required: true
+  image:
+    description: Imagen por digest
+    required: true
+  client-id:
+    required: true
+  tenant-id:
+    required: true
+  subscription-id:
+    required: true
+  name-suffix:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Comprobar que la VM está encendida
+      shell: bash
+      env:
+        RG: rg-eventos-${{ inputs.name-suffix }}
+        VM: vm-eventos-${{ inputs.name-suffix }}-k3s
+      run: |
+        state="$(az vm get-instance-view -g "$RG" -n "$VM" \
+          --query "instanceView.statuses[?starts_with(code, 'PowerState/')].code | [0]" -o tsv)"
+        if [[ "$state" != "PowerState/running" ]]; then
+          echo "::error::La VM no está encendida ($state). Encenderla con el workflow Energía de la VM."
+          exit 1
+        fi
+
+    - name: Ejecutar la entrega en la VM
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ inputs.environment }}
+        IMAGE: ${{ inputs.image }}
+        RG: rg-eventos-${{ inputs.name-suffix }}
+        VM: vm-eventos-${{ inputs.name-suffix }}-k3s
+      run: |
+        bundle="$RUNNER_TEMP/entrega.sh"
+        bash scripts/k8s-bundle.sh "$ENVIRONMENT" "$IMAGE" > "$bundle"
+        # Run Command devuelve éxito aunque el script falle: el resultado real es la marca final.
+        result="$(az vm run-command invoke -g "$RG" -n "$VM" --command-id RunShellScript \
+          --scripts @"$bundle" --query 'value[0].message' -o tsv)"
+        echo "$result"
+        if ! grep -qxF "ENTREGA_OK $ENVIRONMENT $IMAGE" <<<"$result"; then
+          echo "::error::La entrega a $ENVIRONMENT no se completó."
+          exit 1
+        fi
+        echo "### $ENVIRONMENT: \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
