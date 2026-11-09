@@ -52,12 +52,47 @@ alcance:  /subscriptions/<sub>   (asignado a id-eventos-ops)
 
 **Eliminación probada.** El cambio de región destruyó por Terraform todos los recursos regionales anteriores, sin recursos huérfanos: el grupo antiguo se eliminó completo.
 
+**Cargos reales al 2026-11-08** (API de Cost Management, `ActualCost` agrupado por Resource Group; comando en `costos.md`):
+
+```text
+Desde 2026-10-20 (proyecto)              Mes de noviembre
+rg-ticket-e3065e-shared      1.3613      rg-ticket-e3065e-shared   1.2703
+devops-k3s-rg                0.6250      devops-k3s-rg             0.6250
+rg-eventos-b97e31            0.1711      rg-eventos-b97e31         0.1711
+rg-ticket-e3065e-production  0.0254      rg-eventos-tfstate        0.0002
+rg-ticket-e3065e-development 0.0251
+rg-ticket-e3065e             0.0043
+rg-ticket-bootstrap          0.0002
+rg-eventos-tfstate           0.0002
+TOTAL                        2.2126 USD  TOTAL                     2.0666 USD
+```
+
+La plataforma del proyecto (`rg-eventos-*`) suma US$0.17. El resto de la suscripción corresponde a:
+
+- el Laboratorio 4 (`rg-ticket-*`), que aún existe y es el mayor gasto;
+- la práctica de la clase de integración (`devops-k3s-rg`), ya eliminada.
+
+Saldo hasta el límite: US$100 − US$2.21 = **US$97.79**.
+
+**Crédito de Azure for Students** (portal, *Education → Información general*, 2026-11-08):
+
+```text
+Créditos disponibles             98 US$ de 100 US$
+Días hasta que expire el crédito 344 (expira el 18/10/2027)
+Costos de noviembre              2,12 US$
+```
+
+El crédito se activó el 2026-10-18, dos días antes del inicio del proyecto. Lo consumido según el portal (≈ US$2, redondeado) coincide con el acumulado de la API. Los costos de noviembre del portal (US$2.12) son algo mayores que los de la consulta (US$2.07) porque incluyen cargos más recientes.
+
 ## Pendiente
 
 - [x] Ejecutar el bootstrap actualizado, que crea `id-eventos-ops` y su rol (2026-11-08).
 - [ ] Configurar el environment `azure-ops` y la variable `OPS_CLIENT_ID` (administrador del repositorio).
 - [ ] Enlazar la primera ejecución programada de `vm-power.yml` (`VM deallocated`).
+- [x] Primer registro de cargos reales (2026-11-08).
+- [x] Crédito restante de Azure for Students, leído en el portal: US$98 de US$100 (2026-11-08).
 - [ ] Registrar cada semana, y antes de cada entrega y de la defensa, el acumulado del mes, el acumulado del proyecto, el crédito restante y el saldo hasta US$100 (tabla de `costos.md`). El presupuesto mensual no cubre el agregado de varios meses.
+- [ ] Destruir los recursos del Laboratorio 4 después de su revisión docente (≈ US$1/día).
 
 ## Limitaciones
 
