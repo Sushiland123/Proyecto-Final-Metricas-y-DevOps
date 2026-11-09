@@ -2,6 +2,8 @@
 
 La plataforma corre en **un clúster K3s de un solo nodo** sobre una VM de Azure creada con Terraform. Development y production se separan **lógicamente** con namespaces dentro del mismo clúster (condición 5.4 del proyecto). Este documento cubre la infraestructura de Azure; los manifiestos de Kubernetes, la publicación de imágenes y la entrega continua pertenecen a DEV-02…05 y DEV-09…12. Costos y apagado: [costos.md](costos.md) (DEV-14).
 
+Manifiestos de aplicación y orden de migración/rollout para revisión: [`kubernetes/README.md`](../../kubernetes/README.md). Su existencia no acredita despliegue en este clúster; la evidencia pendiente se registra en [DEV-09](../evidencia/DEV-09/index.md).
+
 ## Arquitectura
 
 ```mermaid

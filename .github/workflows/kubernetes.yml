@@ -1,0 +1,42 @@
+name: Kubernetes manifests
+
+on:
+  pull_request:
+    paths: ['kubernetes/**', 'scripts/render-k8s.py', 'scripts/test-postgres-init.py', 'scripts/tests/test_k8s_render.py', '.github/workflows/kubernetes.yml']
+  push:
+    branches: [main]
+    paths: ['kubernetes/**', 'scripts/render-k8s.py', 'scripts/test-postgres-init.py', 'scripts/tests/test_k8s_render.py', '.github/workflows/kubernetes.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Offline deployment contracts (no cluster or credentials)
+        run: python3 -m unittest discover -s scripts/tests -p test_k8s_render.py -v
+      - name: PostgreSQL init script syntax
+        run: bash -n kubernetes/postgres-init.sh
+      - name: Install checksum-pinned kubeconform
+        run: |
+          curl --fail --location --silent --show-error https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz -o "$RUNNER_TEMP/kubeconform.tar.gz"
+          echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  $RUNNER_TEMP/kubeconform.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/kubeconform.tar.gz" -C "$RUNNER_TEMP" kubeconform
+      - name: Strict Kubernetes 1.35 schemas (fixture digests, never applied)
+        env:
+          FIXTURE_IMAGE: ghcr.io/marchelo23/proyecto-final-metricas-y-devops/event-service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          FIXTURE_POSTGRES: docker.io/library/postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        run: |
+          for environment in development production; do
+            for stage in foundation migration workloads; do
+              python3 scripts/render-k8s.py --environment "$environment" --stage "$stage" --image "$FIXTURE_IMAGE" --postgres-image "$FIXTURE_POSTGRES" \
+                | "$RUNNER_TEMP/kubeconform" -strict -summary -kubernetes-version 1.35.0
+            done
+          done
+      - name: PostgreSQL init and runtime privilege integration (disposable, no network)
+        run: python3 scripts/test-postgres-init.py

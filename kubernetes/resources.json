@@ -1,0 +1,136 @@
+{
+  "foundation": [
+    {
+      "apiVersion": "v1", "kind": "Namespace",
+      "metadata": {"name": "$NAMESPACE", "labels": {"pod-security.kubernetes.io/enforce": "restricted", "pod-security.kubernetes.io/enforce-version": "v1.35"}}
+    },
+    {
+      "apiVersion": "v1", "kind": "ServiceAccount",
+      "metadata": {"name": "event-service"},
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "v1", "kind": "ConfigMap",
+      "metadata": {"name": "event-service-config"},
+      "data": {"BIND_ADDR": "0.0.0.0:8000", "DB_CONNECT_TIMEOUT_SECONDS": "3", "DB_STATEMENT_TIMEOUT_MS": "5000", "PROCESSOR_BATCH_SIZE": "100", "PROCESSOR_POLL_MS": "100"}
+    },
+    {
+      "apiVersion": "v1", "kind": "ConfigMap",
+      "metadata": {"name": "postgres-init"},
+      "data": {"10-runtime-roles.sh": "$POSTGRES_INIT_SCRIPT"}
+    },
+    {
+      "apiVersion": "v1", "kind": "Service",
+      "metadata": {"name": "postgres"},
+      "spec": {"clusterIP": "None", "selector": {"app.kubernetes.io/name": "postgres"}, "ports": [{"name": "postgres", "port": 5432, "targetPort": 5432}]}
+    },
+    {
+      "apiVersion": "apps/v1", "kind": "StatefulSet",
+      "metadata": {"name": "postgres"},
+      "spec": {
+        "serviceName": "postgres", "replicas": 1,
+        "persistentVolumeClaimRetentionPolicy": {"whenDeleted": "Retain", "whenScaled": "Retain"},
+        "selector": {"matchLabels": {"app.kubernetes.io/name": "postgres"}},
+        "template": {
+          "metadata": {"labels": {"app.kubernetes.io/name": "postgres"}},
+          "spec": {
+            "serviceAccountName": "event-service", "automountServiceAccountToken": false,
+            "securityContext": {"runAsNonRoot": true, "runAsUser": 999, "runAsGroup": 999, "fsGroup": 999, "seccompProfile": {"type": "RuntimeDefault"}},
+            "terminationGracePeriodSeconds": 60,
+            "containers": [{
+              "name": "postgres", "image": "$POSTGRES_IMAGE",
+              "envFrom": [{"secretRef": {"name": "postgres-credentials"}}],
+              "env": [{"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"}],
+              "ports": [{"name": "postgres", "containerPort": 5432}],
+              "securityContext": {"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": {"drop": ["ALL"]}},
+              "resources": {"requests": {"cpu": "250m", "memory": "256Mi"}, "limits": {"cpu": "1", "memory": "1Gi"}},
+              "startupProbe": {"exec": {"command": ["sh", "-ec", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}, "periodSeconds": 5, "failureThreshold": 60},
+              "readinessProbe": {"exec": {"command": ["sh", "-ec", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}, "periodSeconds": 5, "timeoutSeconds": 3},
+              "livenessProbe": {"exec": {"command": ["sh", "-ec", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}, "periodSeconds": 10, "timeoutSeconds": 3, "failureThreshold": 6},
+              "volumeMounts": [{"name": "data", "mountPath": "/var/lib/postgresql/data"}, {"name": "run", "mountPath": "/var/run/postgresql"}, {"name": "tmp", "mountPath": "/tmp"}, {"name": "init", "mountPath": "/docker-entrypoint-initdb.d", "readOnly": true}]
+            }],
+            "volumes": [{"name": "run", "emptyDir": {}}, {"name": "tmp", "emptyDir": {}}, {"name": "init", "configMap": {"name": "postgres-init", "defaultMode": 365}}]
+          }
+        },
+        "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOnce"], "storageClassName": "local-path", "resources": {"requests": {"storage": "2Gi"}}}}]
+      }
+    }
+  ],
+  "migration": [{
+    "apiVersion": "batch/v1", "kind": "Job",
+    "metadata": {"name": "$MIGRATION_JOB"},
+    "spec": {
+      "backoffLimit": 0, "activeDeadlineSeconds": 180, "ttlSecondsAfterFinished": 86400,
+      "template": {
+        "metadata": {"labels": {"app.kubernetes.io/name": "event-service", "app.kubernetes.io/component": "migration"}},
+        "spec": {
+          "restartPolicy": "Never", "serviceAccountName": "event-service", "automountServiceAccountToken": false,
+          "securityContext": {"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "seccompProfile": {"type": "RuntimeDefault"}},
+          "containers": [{
+            "name": "migrate", "image": "$IMAGE", "args": ["migrate"],
+            "env": [{"name": "DATABASE_URL", "valueFrom": {"secretKeyRef": {"name": "event-service-migration", "key": "DATABASE_URL"}}}],
+            "securityContext": {"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": {"drop": ["ALL"]}},
+            "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}}
+          }]
+        }
+      }
+    }
+  }],
+  "workloads": [
+    {
+      "apiVersion": "v1", "kind": "Service",
+      "metadata": {"name": "event-service"},
+      "spec": {"type": "ClusterIP", "selector": {"app.kubernetes.io/name": "event-service", "app.kubernetes.io/component": "api"}, "ports": [{"name": "http", "port": 8000, "targetPort": "http"}]}
+    },
+    {
+      "apiVersion": "apps/v1", "kind": "Deployment",
+      "metadata": {"name": "event-service-api"},
+      "spec": {
+        "replicas": 1, "revisionHistoryLimit": 3,
+        "strategy": {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0}},
+        "selector": {"matchLabels": {"app.kubernetes.io/name": "event-service", "app.kubernetes.io/component": "api"}},
+        "template": {
+          "metadata": {"labels": {"app.kubernetes.io/name": "event-service", "app.kubernetes.io/component": "api"}},
+          "spec": {
+            "serviceAccountName": "event-service", "automountServiceAccountToken": false,
+            "securityContext": {"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "seccompProfile": {"type": "RuntimeDefault"}},
+            "terminationGracePeriodSeconds": 30,
+            "containers": [{
+              "name": "api", "image": "$IMAGE", "args": ["serve"],
+              "ports": [{"name": "http", "containerPort": 8000}],
+              "envFrom": [{"configMapRef": {"name": "event-service-config"}}, {"secretRef": {"name": "event-service-credentials"}}],
+              "securityContext": {"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": {"drop": ["ALL"]}},
+              "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
+              "startupProbe": {"httpGet": {"path": "/health/live", "port": "http"}, "periodSeconds": 2, "failureThreshold": 30},
+              "readinessProbe": {"httpGet": {"path": "/health/ready", "port": "http"}, "periodSeconds": 5, "timeoutSeconds": 4, "failureThreshold": 2},
+              "livenessProbe": {"httpGet": {"path": "/health/live", "port": "http"}, "periodSeconds": 10, "timeoutSeconds": 2, "failureThreshold": 3}
+            }]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1", "kind": "Deployment",
+      "metadata": {"name": "event-service-worker"},
+      "spec": {
+        "replicas": 1, "revisionHistoryLimit": 3,
+        "selector": {"matchLabels": {"app.kubernetes.io/name": "event-service", "app.kubernetes.io/component": "worker"}},
+        "template": {
+          "metadata": {"labels": {"app.kubernetes.io/name": "event-service", "app.kubernetes.io/component": "worker"}},
+          "spec": {
+            "serviceAccountName": "event-service", "automountServiceAccountToken": false,
+            "securityContext": {"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "seccompProfile": {"type": "RuntimeDefault"}},
+            "terminationGracePeriodSeconds": 30,
+            "containers": [{
+              "name": "worker", "image": "$IMAGE", "args": ["process"],
+              "envFrom": [{"configMapRef": {"name": "event-service-config"}}],
+              "env": [{"name": "DATABASE_URL", "valueFrom": {"secretKeyRef": {"name": "event-service-credentials", "key": "DATABASE_URL"}}}],
+              "securityContext": {"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": {"drop": ["ALL"]}},
+              "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}}
+            }]
+          }
+        }
+      }
+    }
+  ]
+}
