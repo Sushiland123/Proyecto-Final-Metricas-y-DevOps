@@ -178,10 +178,15 @@
             "containers": [{
               "name": "worker", "image": "$IMAGE", "args": ["process"],
               "envFrom": [{"configMapRef": {"name": "event-service-config"}}],
-              "env": [{"name": "DATABASE_URL", "valueFrom": {"secretKeyRef": {"name": "event-service-credentials", "key": "DATABASE_URL"}}}],
+              "env": [{"name": "DATABASE_URL", "valueFrom": {"secretKeyRef": {"name": "event-service-credentials", "key": "DATABASE_URL"}}}, {"name": "WORKER_HEALTH_DIR", "value": "/run/worker-health"}],
               "securityContext": {"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": {"drop": ["ALL"]}},
-              "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}}
-            }]
+              "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
+              "startupProbe": {"exec": {"command": ["/usr/local/bin/event-service", "worker-health", "live"]}, "periodSeconds": 2, "timeoutSeconds": 2, "failureThreshold": 30},
+              "readinessProbe": {"exec": {"command": ["/usr/local/bin/event-service", "worker-health", "ready"]}, "periodSeconds": 5, "timeoutSeconds": 2, "failureThreshold": 2},
+              "livenessProbe": {"exec": {"command": ["/usr/local/bin/event-service", "worker-health", "live"]}, "periodSeconds": 10, "timeoutSeconds": 2, "failureThreshold": 3},
+              "volumeMounts": [{"name": "worker-health", "mountPath": "/run/worker-health"}]
+            }],
+            "volumes": [{"name": "worker-health", "emptyDir": {"medium": "Memory", "sizeLimit": "1Mi"}}]
           }
         }
       }
