@@ -54,6 +54,60 @@
         },
         "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOnce"], "storageClassName": "local-path", "resources": {"requests": {"storage": "2Gi"}}}}]
       }
+    },
+    {
+      "apiVersion": "v1", "kind": "ServiceAccount",
+      "metadata": {"name": "event-service-deployer"},
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
+      "metadata": {"name": "event-service-deployer"},
+      "rules": [
+        {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "list", "watch", "create", "patch"]},
+        {"apiGroups": ["apps"], "resources": ["replicasets"], "verbs": ["get", "list", "watch"]},
+        {"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["get", "list", "watch", "create"]},
+        {"apiGroups": [""], "resources": ["services"], "verbs": ["get", "list", "create", "patch"]},
+        {"apiGroups": [""], "resources": ["pods", "pods/log", "events"], "verbs": ["get", "list", "watch"]}
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
+      "metadata": {"name": "event-service-deployer"},
+      "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "event-service-deployer"},
+      "subjects": [{"kind": "ServiceAccount", "name": "event-service-deployer"}]
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+      "metadata": {"name": "default-deny"},
+      "spec": {"podSelector": {}, "policyTypes": ["Ingress", "Egress"]}
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+      "metadata": {"name": "allow-dns"},
+      "spec": {
+        "podSelector": {}, "policyTypes": ["Egress"],
+        "egress": [{
+          "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+          "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]
+        }]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+      "metadata": {"name": "postgres-from-event-service"},
+      "spec": {
+        "podSelector": {"matchLabels": {"app.kubernetes.io/name": "postgres"}}, "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "event-service"}}}], "ports": [{"protocol": "TCP", "port": 5432}]}]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+      "metadata": {"name": "event-service-to-postgres"},
+      "spec": {
+        "podSelector": {"matchLabels": {"app.kubernetes.io/name": "event-service"}}, "policyTypes": ["Egress"],
+        "egress": [{"to": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "postgres"}}}], "ports": [{"protocol": "TCP", "port": 5432}]}]
+      }
     }
   ],
   "migration": [{
