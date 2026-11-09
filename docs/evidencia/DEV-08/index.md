@@ -41,3 +41,9 @@ Agregar aquí, cuando existan:
 
 - Hasta que el repositorio tenga los environments y las variables, solo corre `validate`.
 - Los cron de GitHub pueden retrasarse algunos minutos.
+
+## Corrección de la guía de revocación del PR #55
+
+La guía de [acceso SSH](../../../infra/ssh/README.md#quitar-el-acceso) distingue ahora entre quitar una clave SSH, cerrar sesiones y revocar un kubeconfig de administrador copiado. Rotar solo el certificado `admin` no invalida el anterior; la documentación oficial de [K3s](https://docs.k3s.io/cli/certificate#cautions-against-ca-reuse) exige reemplazar la CA de confianza para invalidarlo.
+
+La corrección es documental: no se ejecutó rotación de certificados, no se modificaron recursos de Azure y no se afirma que se haya probado una revocación real. La guía exige mantenimiento planificado, respaldo, recuperación y verificación de que las credenciales anteriores ya no autentican.

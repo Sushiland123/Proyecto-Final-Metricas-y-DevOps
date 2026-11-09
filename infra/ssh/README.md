@@ -22,11 +22,10 @@ Las claves públicas pueden estar en un repositorio público. La clave privada (
    sudo kill <PID de sshd de esa conexión>
    ```
 
-3. **Quitar la clave no invalida un kubeconfig que el integrante haya copiado.** El de `~/.kube/config` usa el certificado de administrador del clúster. Si lo copió, rotar ese certificado y volver a copiar el kubeconfig de quienes conservan acceso. El procedimiento es `k3s certificate rotate`, con K3s detenido:
+3. **Quitar la clave no invalida un kubeconfig que el integrante haya copiado.** El de `~/.kube/config` usa el certificado de administrador del clúster. `k3s certificate rotate --service admin` genera otro certificado y otra clave, pero **no revoca el certificado anterior**: sigue siendo aceptado mientras sea válido y el clúster confíe en la CA que lo firmó. No usar esa rotación como prueba de revocación.
 
-   ```bash
-   sudo systemctl stop k3s
-   sudo k3s certificate rotate --service admin
-   sudo systemctl start k3s
-   sudo install -m 0600 -o azureuser -g azureuser /etc/rancher/k3s/k3s.yaml ~azureuser/.kube/config
-   ```
+4. **Si se debe invalidar un kubeconfig de administrador copiado, tratarlo como una credencial comprometida.** Kubernetes no admite listas de revocación de certificados; se debe reemplazar la CA de confianza correspondiente de modo que el certificado anterior deje de ser confiable. Seguir la [advertencia de K3s sobre revocación](https://docs.k3s.io/cli/certificate#cautions-against-ca-reuse) y su [procedimiento para rotar las CA autofirmadas](https://docs.k3s.io/cli/certificate#rotating-self-signed-ca-certificates). Renovar certificados manteniendo la misma raíz de confianza no resuelve la revocación.
+
+   Esta operación es disruptiva y no forma parte del apply de claves SSH: coordinar una ventana de mantenimiento, respaldar el datastore y el token del servidor según el procedimiento de K3s y preparar la recuperación antes de cambiar nada. Actualizar los tokens y la confianza de los nodos, reiniciar los componentes indicados por K3s y redistribuir kubeconfigs solo a quienes conservan acceso. No ejecutar una rotación improvisada ni conservar la confianza en la CA anterior mediante firma cruzada si el objetivo es revocar sus certificados.
+
+5. **Verificar la revocación antes de darla por terminada.** Desde una ruta de red autorizada hacia la API, comprobar que el kubeconfig anterior ya no permite autenticarse (no basta un fallo de conexión o de validación del certificado del servidor), que los kubeconfigs nuevos funcionan y que el clúster y sus cargas están sanos. No publicar kubeconfigs, claves ni tokens como evidencia.
