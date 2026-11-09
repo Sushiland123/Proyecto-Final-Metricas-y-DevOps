@@ -26,10 +26,14 @@ Las identidades usan OIDC, así que no hay credenciales de Azure en el repositor
 
   Los forks no reciben token OIDC, así que en ese PR el plan se omite con un aviso. El speculative plan corre en PRs desde una rama del propio repositorio, una vez configuradas las variables (README, *Configuración del repositorio*).
 
+- **En `main`, después del merge del PR #40:** [ejecución de Terraform 42499426565](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/actions/runs/42499426565).
+  - `fmt y validate`: éxito en todos sus pasos (`terraform fmt`, `init -backend=false`, `validate`, `tflint`).
+  - `apply controlado`: se omitió (`skipped`), porque al momento del merge el repositorio aún no tenía las variables. Es el comportamiento previsto: sin `APPLY_CLIENT_ID` no hay apply.
+
 Agregar aquí, cuando existan:
 
-- [ ] Enlace a la ejecución de `fmt`/`validate`/`tflint` del PR aprobada.
-- [ ] Enlace a un speculative plan de un PR del mismo repositorio, con su artefacto.
+- [x] Ejecución de `fmt`/`validate`/`tflint` en GitHub: la de `main` enlazada arriba.
+- [ ] Enlace a un speculative plan de un PR del mismo repositorio, con su artefacto. El PR del acceso del equipo (rama `infra/DEV-08-acceso-equipo`) cambia infraestructura real sin destruir nada: `Plan: 1 to add`.
 - [ ] Enlace a un apply en `main` que muestre la espera de aprobación de `azure-infra`.
 - [ ] Enlace a una ejecución de `terraform-drift.yml` con `No changes`.
 
