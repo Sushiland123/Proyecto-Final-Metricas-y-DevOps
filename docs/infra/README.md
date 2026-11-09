@@ -43,6 +43,7 @@ flowchart LR
 | IP pública | `pip-eventos-<sufijo>-k3s` | Estática, Standard, con etiqueta DNS `eventos-<sufijo>` |
 | VM | `vm-eventos-<sufijo>-k3s` | Ubuntu 24.04, `Standard_B2s_v2` (2 vCPU, 8 GB), zona 1, disco StandardSSD de 64 GB |
 | Presupuesto | `budget-eventos-<sufijo>` | US$100 mensuales a nivel de suscripción; alertas al 50 % y 80 % reales y al 100 % pronosticado |
+| Extensión de la VM | `team-ssh-keys` (CustomScript) | `authorized_keys` de `azureuser` con la clave del administrador y las de [`infra/ssh/*.pub`](../../infra/ssh/README.md) |
 
 El bootstrap crea, fuera de Terraform, el Resource Group `rg-eventos-tfstate` con el Storage del state y las tres identidades de GitHub Actions.
 
@@ -133,6 +134,25 @@ Ningún PR ni otra rama aplica cambios. El job exige `github.ref == 'refs/heads/
 | **Secret** | `INFRA_BUDGET_CONTACT_EMAILS` | Lista HCL, por ejemplo `["integrante@esen.edu.sv"]` |
 
 No hay credenciales: el acceso a Azure usa OIDC. La IP de administración y los correos se guardan como *secrets* solo por privacidad. El repositorio es público, y las *variables* aparecen en texto plano en los logs de Actions. Además, Terraform las declara `sensitive`, así que tampoco aparecen en los planes ni en el artefacto del plan.
+
+## Acceso del equipo
+
+Los integrantes que administran el clúster entran como `azureuser` con su propia clave:
+
+- **Clave:** cada integrante tiene un archivo `infra/ssh/<nombre>.pub` en el repositorio, agregado por PR. Terraform escribe `authorized_keys` con exactamente esas claves y la del administrador.
+- **IP:** su `/32` va en el secret `INFRA_ADMIN_CIDRS` y en el `terraform.tfvars` local del administrador; no se publica en el repositorio.
+- **VM encendida:** Azure solo cambia la extensión de claves con la VM en marcha, así que hay que encenderla antes de aprobar el apply.
+
+Procedimiento completo en [`infra/ssh/README.md`](../../infra/ssh/README.md).
+
+| Integrante | Desde | Bloque |
+|---|---|---|
+| Leonardo (administrador, `admin_ssh_key`) | 2026-11-08 | B |
+| Valeria (`infra/ssh/valeria.pub`) | 2026-11-08 | C |
+
+Dentro de la VM se usa `sudo k3s kubectl`, como en la clase. Para `kubectl` local, `SSH_KEY=~/.ssh/<clave> bash infra/scripts/kube-access.sh` y el túnel que indica. La API 6443 sigue cerrada a Internet.
+
+`kube-access.sh` lee el FQDN con `terraform output`, lo que exige el backend inicializado y acceso al state en Azure. Un integrante sin rol en Azure pasa el nombre directamente: `FQDN=eventos-<sufijo>.mexicocentral.cloudapp.azure.com SSH_KEY=~/.ssh/<clave> bash infra/scripts/kube-access.sh`. Para quitar un acceso, ver [*Quitar el acceso*](../../infra/ssh/README.md#quitar-el-acceso): el apply no corta sesiones abiertas ni invalida un kubeconfig copiado.
 
 ## Reconstrucción desde cero · DEV-13
 
@@ -243,3 +263,4 @@ Simulacro de reconstrucción desde cero por otro integrante, en su propia suscri
 | 2026-11-08 | cloud-init en `running` indefinidamente y sin K3s | La descarga de K3s desde GitHub falló (`Download failed`) y el template esperaba el nodo sin límite | Template con reintentos y espera acotada. La VM se reemplazó por Terraform: la descarga falló tres veces y se instaló al cuarto intento |
 | 2026-11-08 | Un plan para agregar tags quería **recrear la subred** | `replace_triggered_by` apuntaba al recurso VNet completo, que también se dispara con actualizaciones en sitio | Se cambió a `azurerm_virtual_network.main.id`, que solo cambia cuando la VNet se reemplaza. El plan quedó en `0 to add, 6 to change, 0 to destroy` |
 | 2026-11-08 | `state blob is already locked` después de un plan interrumpido por la red | El plan alcanzó a tomar el lease y no pudo liberarlo | Se confirmó que no había otra ejecución en curso y se liberó con `az storage blob lease break` |
+| 2026-11-08 | Valeria necesitaba acceso SSH para el bloque C | `admin_ssh_key` solo admite la clave del administrador sin reemplazar la VM | **Intervención manual registrada.** La IP se agregó a `admin_cidrs` con Terraform: apply local de un valor, sin cambio de código, con `1 to change` solo en el NSG. La clave se agregó a mano a `authorized_keys`. Se reconcilia con la extensión `team-ssh-keys` e `infra/ssh/valeria.pub`; su apply reemplaza el archivo por el contenido declarado. El secret `INFRA_ADMIN_CIDRS` debe incluir la misma IP |

@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - 'infra/terraform/**'
+      - 'infra/ssh/**' # claves del equipo: acceso.tf las lee de aquí
       - '.github/workflows/terraform.yml'
   workflow_dispatch:
 
