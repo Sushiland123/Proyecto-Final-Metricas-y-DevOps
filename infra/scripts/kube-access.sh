@@ -6,10 +6,12 @@
 #   3) KUBECONFIG=./kubeconfig kubectl get nodes
 # Con una clave distinta de la predeterminada: SSH_KEY=~/.ssh/<clave> bash infra/scripts/kube-access.sh
 # Antes de la primera conexión, comparar la huella con: bash infra/scripts/vm.sh fingerprint
+# Sin acceso al state de Terraform: FQDN=eventos-<sufijo>.mexicocentral.cloudapp.azure.com SSH_KEY=... bash infra/scripts/kube-access.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FQDN="$(terraform -chdir="$ROOT/infra/terraform" output -raw public_fqdn)"
+# Sin acceso al state (integrantes sin rol en Azure): FQDN=<nombre DNS de la VM>.
+FQDN="${FQDN:-$(terraform -chdir="$ROOT/infra/terraform" output -raw public_fqdn)}"
 ADMIN="${ADMIN_USER:-azureuser}"
 OUT="${1:-$ROOT/kubeconfig}"
 
