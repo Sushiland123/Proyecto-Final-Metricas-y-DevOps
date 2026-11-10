@@ -94,8 +94,7 @@ pods_run_digest() {
 
 # El Pod anterior puede seguir terminando un momento después del rollout.
 wait_for_digest() {
-  local attempt
-  for attempt in $(seq 1 20); do
+  for _ in $(seq 1 20); do
     pods_run_digest "$1" "$2" && return 0
     sleep 3
   done
