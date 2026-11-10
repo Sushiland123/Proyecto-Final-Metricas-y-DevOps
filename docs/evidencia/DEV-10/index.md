@@ -33,6 +33,8 @@ Esta cuenta no puede pedir un Secret a la API, pero tiene un acceso indirecto: p
 
 [`k8s-verify-security.sh`](../../../scripts/k8s-verify-security.sh) comprueba permisos con `kubectl auth can-i`, contexto de los Pods, rechazo de un Pod privilegiado, ausencia de valores de Secrets en logs y aislamiento de red. Compara los valores dentro del proceso sin imprimirlos.
 
+Para el ingreso, la sonda recibe durante la prueba una NetworkPolicy temporal que le abre la salida solo hacia la API, PostgreSQL y un puerto de control. Sin ella, la conexión se cortaría por el egreso de la propia sonda y la prueba no demostraría nada sobre el ingreso. El puerto de control confirma que la política temporal ya rige antes de evaluar el rechazo. Al terminar se eliminan el Pod y la política.
+
 ## Resultado obtenido · 2026-11-09, ensayo local
 
 **No es la evidencia final.** Se ejecutó en un K3s `v1.35.2+k3s1` desechable en Docker, con la imagen publicada `sha256:bd50b3cf…`.
@@ -56,5 +58,18 @@ Clúster K3s `v1.35.2+k3s1` de la VM del proyecto, namespace `eventos-developmen
 | `k8s-verify-security.sh development` | 21 de 21 controles correctos |
 | `PROCESSOR_POLL_MS` cambiado y reinicio del worker | Digest `bd50b3cf03f2` antes y después |
 | Desde Internet | 6443, 5432 y 8000 no responden |
+
+### Prueba de ingreso con salida permitida
+
+La tabla anterior corresponde a la primera versión del script. La versión corregida se ejecutó en el mismo clúster:
+
+| Prueba | Resultado |
+|---|---|
+| `k8s-verify-security.sh development` con las políticas normales | 23 de 23 controles correctos |
+| Control negativo: ingreso abierto y egreso denegado, script anterior | Todos los controles pasan: falso positivo |
+| Control negativo: ingreso abierto y egreso denegado, script corregido | 2 fallas, PostgreSQL y API, código de salida 1 |
+| Políticas restauradas | 23 de 23; sin Pods ni políticas temporales restantes |
+
+El control negativo quitó `Ingress` de `default-deny` y eliminó `postgres-from-event-service`. Se restauró aplicando el manifiesto `foundation`.
 
 La misma comprobación debe repetirse en production cuando tenga workloads. Sin Pods de aplicación, el control falla por falta de evidencia.
