@@ -56,3 +56,7 @@ La vulnerabilidad alta es `CVE-2026-84782` en `libssl3`, relacionada con DTLS y 
 ## Limitaciones
 
 El binario va sin símbolos, por lo que Trivy no ve sus crates dentro de la imagen. Por eso `Cargo.lock` se analiza aparte y hay dos SBOM. La severidad bloqueante es solo la crítica con parche disponible; las altas quedan en el reporte para revisión.
+
+## Despliegue por digest · 2026-11-09
+
+El clúster de Azure ejecuta la imagen por digest, no por tag: commit `ad1c0c6`, [ejecución de publicación](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/actions/runs/42542020614), digest `sha256:bd50b3cf03f23eb754c3635110222330ac6cba76b404101020eb091ef2845095`. El `imageID` de API, worker y Job de migración coincide con ese digest. El detalle está en [DEV-09](../DEV-09/index.md).
