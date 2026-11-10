@@ -19,7 +19,9 @@
 5. **Verificar.** El script comprueba rollout, digest en los Pods y smoke, y termina con `ROLLBACK_OK`. Confirmar los Pods con `get pods`.
 6. **Registrar** causa, digest anterior, digest restaurado y tiempo.
 
-`k8s-deliver.sh` restaura y comprueba por sí solo cuando falla una entrega, usando las revisiones que capturó antes de empezar.
+`k8s-deliver.sh` restaura y comprueba por sí solo cuando falla una entrega, usando los templates que capturó antes de empezar, sin depender de que el controlador haya actualizado la anotación de revisión.
+
+El smoke compartido con la entrega comprueba `event_id` y `processed_at` en el mismo objeto JSON. Una lectura anterior procesada no permite dar por recuperado un evento nuevo pendiente. La regresión offline está en `scripts/tests/test_k8s_delivery.py`; no acredita una nueva ejecución del rollback en Azure.
 
 ## Qué no hace un rollback
 
