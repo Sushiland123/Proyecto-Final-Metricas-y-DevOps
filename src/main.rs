@@ -244,6 +244,7 @@ mod tests {
         assert_eq!(retry.failure(), Duration::from_millis(250));
     }
     #[test]
+    #[allow(clippy::unwrap_used)]
     /// Probes pass only on a recent heartbeat, and the file records the latest write.
     fn worker_heartbeat_requires_a_recent_write() {
         let directory = std::env::temp_dir().join(format!("worker-health-{}", std::process::id()));
