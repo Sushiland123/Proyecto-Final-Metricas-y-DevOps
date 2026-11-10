@@ -13,7 +13,7 @@
 | `Deployment/event-service-api` | `serve`, Service interno en 8000, readiness DB y liveness del proceso |
 | `Deployment/event-service-worker` | `process`, sin Service ni probes HTTP inexistentes, solo credencial DB |
 | `ServiceAccount/event-service` | Sin token montado ni permisos RBAC concedidos |
-| `ServiceAccount/event-service-deployer` | Solo actualiza workloads y crea Jobs de su namespace; no lee Secrets |
+| `ServiceAccount/event-service-deployer` | Solo actualiza workloads y crea Jobs de su namespace; sin acceso a la API de Secrets (ver alcance en DEV-10) |
 | `NetworkPolicy` | Todo denegado salvo DNS y event-service → PostgreSQL:5432 |
 
 La imagen de aplicación se exige por digest del repositorio GHCR del proyecto. PostgreSQL también se exige por digest del repositorio oficial. El renderer rechaza tags, repositorios distintos y ambientes arbitrarios. No instala herramientas ni invoca `kubectl`, Azure o Docker.
