@@ -11,7 +11,7 @@
 3. **Aprobación:** el environment `production` espera a un revisor.
 4. **production:** el mismo digest y los mismos pasos. No se reconstruye nada.
 
-Si falla la migración, los workloads no cambian. Si falla el rollout o el smoke, [`k8s-deliver.sh`](../../../scripts/k8s-deliver.sh) restaura cada Deployment que la entrega cambió a la revisión capturada antes de empezar, comprueba su digest y repite el smoke. Un Deployment que no cambió no se toca. El job falla, así que production no se ejecuta.
+Si falla la migración, los workloads no cambian. Si falla el rollout o el smoke, [`k8s-deliver.sh`](../../../scripts/k8s-deliver.sh) restaura el template capturado de cada Deployment que la entrega cambió, comprueba su digest y repite el smoke. Compara templates, no anotaciones de revisión que el controlador todavía podría no haber actualizado. Un Deployment que no cambió no se toca. El job falla, así que production no se ejecuta.
 
 ## Decisiones
 
@@ -70,6 +70,15 @@ KUBECTL="sudo k3s kubectl" bash scripts/k8s-ingress.sh <fqdn>
 | Entrega correcta de otra versión | `ENTREGA_OK`, digest `d203a4f1499c` en API y worker |
 
 Las lecturas aumentaron solo por los smoke, sin pérdidas.
+
+## Regresiones offline de la revisión
+
+`python3 -m unittest discover -s scripts/tests -v` incluye `test_k8s_delivery.py`.
+Ejecuta los scripts reales con dobles locales de `kubectl` y `curl`, sin Azure ni credenciales:
+una lectura ajena procesada no satisface el smoke, y un `apply` parcial con anotaciones
+de revisión viejas restaura los templates capturados. Cubre cambios solo en API y en
+ambos Deployments, conservando intacto un worker no modificado. Estas pruebas no
+sustituyen repetir la entrega corregida en el clúster.
 
 ## Pendiente
 

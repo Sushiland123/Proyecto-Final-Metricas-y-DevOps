@@ -14,7 +14,7 @@
 El worker no tiene HTTP y la imagen no tiene shell, así que usa un subcomando del binario. El bucle escribe dos heartbeats en un `emptyDir` en memoria:
 
 - `live`, en cada vuelta. Falla si el bucle se traba por más de 120 s. Ese límite supera la espera máxima de reintento (60 s), para que una caída de la base no reinicie el worker.
-- `ready`, solo tras una consulta correcta. Falla si pasan más de 30 s sin una. Así un worker con credenciales malas no completa el rollout.
+- `ready`, solo tras una consulta correcta. Vence después del intervalo `PROCESSOR_POLL_MS` más 30 s de margen (90 s con el máximo admitido de 60 s). Así no oscila un worker sano con polling lento, y uno con credenciales malas no completa el rollout.
 
 ## Recursos
 
