@@ -11,7 +11,7 @@
 | `ConfigMap/postgres-init` | Roles distintos para migración y runtime, solo al inicializar un volumen vacío |
 | `Job/event-service-migrate-<digest16>` | `migrate` explícito con identidad DDL; mismo digest que API y worker |
 | `Deployment/event-service-api` | `serve`, Service interno en 8000, readiness DB y liveness del proceso |
-| `Deployment/event-service-worker` | `process`, sin Service ni probes HTTP inexistentes, solo credencial DB |
+| `Deployment/event-service-worker` | `process`, sin Service, probes por `exec` con `worker-health`, solo credencial DB |
 | `ServiceAccount/event-service` | Sin token montado ni permisos RBAC concedidos |
 | `ServiceAccount/event-service-deployer` | Solo actualiza workloads y crea Jobs de su namespace; sin acceso a la API de Secrets (ver alcance en DEV-10) |
 | `NetworkPolicy` | Todo denegado salvo DNS y event-service → PostgreSQL:5432 |

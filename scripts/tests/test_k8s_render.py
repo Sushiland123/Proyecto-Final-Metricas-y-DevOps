@@ -58,9 +58,15 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(service["spec"]["selector"], api["spec"]["selector"]["matchLabels"])
         self.assertNotEqual(service["spec"]["selector"], worker["spec"]["selector"]["matchLabels"])
         worker_container = worker["spec"]["template"]["spec"]["containers"][0]
-        self.assertNotIn("livenessProbe", worker_container)
-        self.assertNotIn("readinessProbe", worker_container)
-        self.assertEqual([entry["name"] for entry in worker_container["env"]], ["DATABASE_URL"])
+        for probe, kind in (("startupProbe", "live"), ("readinessProbe", "ready"), ("livenessProbe", "live")):
+            self.assertEqual(
+                worker_container[probe]["exec"]["command"],
+                ["/usr/local/bin/event-service", "worker-health", kind],
+            )
+        self.assertEqual(
+            [entry["name"] for entry in worker_container["env"]],
+            ["DATABASE_URL", "WORKER_HEALTH_DIR"],
+        )
 
     def test_database_data_outlives_pod_and_has_no_public_service(self):
         foundation = self.stage("foundation")

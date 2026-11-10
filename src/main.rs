@@ -6,9 +6,68 @@ use event_service::{
     postgres::PostgresRepository,
     service::EventService,
 };
+use std::path::Path;
 use std::time::Duration;
 use std::{process::ExitCode, sync::Arc};
 use utoipa::OpenApi;
+
+/// Heartbeat file names inside `WORKER_HEALTH_DIR`.
+const WORKER_LIVE_FILE: &str = "live";
+const WORKER_READY_FILE: &str = "ready";
+/// Must exceed the 60 s retry ceiling so a database outage never restarts the worker.
+const WORKER_LIVE_MAX_AGE: Duration = Duration::from_secs(120);
+/// Grace after the configured polling interval before readiness expires.
+const WORKER_READY_MAX_AGE: Duration = Duration::from_secs(30);
+
+/// Validate the same polling interval for both the processor and its exec probe.
+fn parse_processor_poll_ms(value: &str) -> Result<u64, &'static str> {
+    value
+        .parse()
+        .ok()
+        .filter(|n| (1..=60000).contains(n))
+        .ok_or("Invalid PROCESSOR_POLL_MS")
+}
+
+/// Leave time for the next successful poll even at the maximum supported interval.
+fn worker_ready_max_age(poll_ms: u64) -> Duration {
+    Duration::from_millis(poll_ms) + WORKER_READY_MAX_AGE
+}
+
+/// Record a heartbeat; a failed write surfaces as a failing probe, not as log noise.
+fn touch_heartbeat(directory: Option<&Path>, name: &str) {
+    if let Some(directory) = directory {
+        let _ = std::fs::write(directory.join(name), b"ok");
+    }
+}
+
+/// Report whether a heartbeat exists and was written within `max_age`.
+fn heartbeat_is_fresh(path: &Path, max_age: Duration) -> bool {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age <= max_age)
+}
+
+/// Exec probe for the worker, which has no HTTP server and whose image has no shell.
+fn worker_health(kind: Option<String>) -> Result<(), &'static str> {
+    let (name, max_age) = match kind.as_deref() {
+        Some("live") => (WORKER_LIVE_FILE, WORKER_LIVE_MAX_AGE),
+        Some("ready") => (
+            WORKER_READY_FILE,
+            worker_ready_max_age(parse_processor_poll_ms(
+                &std::env::var("PROCESSOR_POLL_MS").unwrap_or_else(|_| "100".into()),
+            )?),
+        ),
+        _ => return Err("Usage: event-service worker-health [live|ready]"),
+    };
+    let directory = std::env::var_os("WORKER_HEALTH_DIR").ok_or("WORKER_HEALTH_DIR required")?;
+    if heartbeat_is_fresh(&Path::new(&directory).join(name), max_age) {
+        Ok(())
+    } else {
+        Err("Worker heartbeat missing or stale")
+    }
+}
 
 /// Bounded retry state for transient processor failures; success resets the delay.
 struct RetryBackoff {
@@ -73,8 +132,11 @@ async fn run() -> Result<(), &'static str> {
         );
         return Ok(());
     }
+    if command == "worker-health" {
+        return worker_health(std::env::args().nth(2));
+    }
     if !matches!(command.as_str(), "serve" | "migrate" | "process" | "drain") {
-        return Err("Usage: event-service [serve|migrate|openapi|process|drain]");
+        return Err("Usage: event-service [serve|migrate|openapi|process|drain|worker-health]");
     }
     let settings = Settings::from_env();
     let repository = PostgresRepository::new(&settings);
@@ -91,20 +153,21 @@ async fn run() -> Result<(), &'static str> {
             .ok()
             .filter(|n| (1..=1000).contains(n))
             .ok_or("Invalid PROCESSOR_BATCH_SIZE")?;
-        let delay: u64 = std::env::var("PROCESSOR_POLL_MS")
-            .unwrap_or_else(|_| "100".into())
-            .parse()
-            .ok()
-            .filter(|n| (1..=60000).contains(n))
-            .ok_or("Invalid PROCESSOR_POLL_MS")?;
+        let delay = parse_processor_poll_ms(
+            &std::env::var("PROCESSOR_POLL_MS").unwrap_or_else(|_| "100".into()),
+        )?;
+        let health_directory = std::env::var_os("WORKER_HEALTH_DIR");
+        let health_directory = health_directory.as_deref().map(Path::new);
         let worker = async {
             let mut backoff =
                 RetryBackoff::new(Duration::from_millis(delay).max(settings.retry_backoff));
             loop {
+                touch_heartbeat(health_directory, WORKER_LIVE_FILE);
                 let mut wait = Duration::from_millis(delay);
                 match store.process(batch_size).await {
                     Ok(0) if command == "drain" => return Ok(()),
                     Ok(count) => {
+                        touch_heartbeat(health_directory, WORKER_READY_FILE);
                         backoff.reset();
                         if count > 0 {
                             tracing::info!(count, "readings processed");
@@ -195,6 +258,40 @@ mod tests {
         assert_eq!(retry.failure(), Duration::from_secs(60));
         retry.reset();
         assert_eq!(retry.failure(), Duration::from_millis(250));
+    }
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    /// Probes pass only on a recent heartbeat, and the file records the latest write.
+    fn worker_heartbeat_requires_a_recent_write() {
+        let directory = std::env::temp_dir().join(format!("worker-health-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(WORKER_READY_FILE);
+        assert!(!heartbeat_is_fresh(&path, WORKER_READY_MAX_AGE));
+        touch_heartbeat(Some(&directory), WORKER_READY_FILE);
+        assert!(heartbeat_is_fresh(&path, WORKER_READY_MAX_AGE));
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(!heartbeat_is_fresh(&path, Duration::from_millis(1)));
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+    #[test]
+    /// A database outage must not restart the worker: liveness outlasts the retry ceiling.
+    fn liveness_tolerates_the_longest_retry() {
+        assert!(WORKER_LIVE_MAX_AGE > Duration::from_secs(60));
+        assert!(WORKER_READY_MAX_AGE < WORKER_LIVE_MAX_AGE);
+    }
+    #[test]
+    /// Readiness must survive every accepted polling interval without waiting for a real minute.
+    fn readiness_outlasts_every_supported_poll_interval() {
+        for poll_ms in [1, 100, 30000, 60000] {
+            assert_eq!(parse_processor_poll_ms(&poll_ms.to_string()), Ok(poll_ms));
+            let max_age = worker_ready_max_age(poll_ms);
+            assert!(max_age > Duration::from_millis(poll_ms));
+            assert!(max_age < WORKER_LIVE_MAX_AGE);
+        }
+        assert_eq!(worker_ready_max_age(60000), Duration::from_secs(90));
+        for invalid in ["0", "60001", "invalid"] {
+            assert!(parse_processor_poll_ms(invalid).is_err());
+        }
     }
     #[test]
     /// Extreme configuration never produces a tight retry loop or unbounded waiting.
