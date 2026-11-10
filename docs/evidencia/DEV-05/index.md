@@ -59,8 +59,21 @@ KUBECTL="sudo k3s kubectl" bash scripts/k8s-ingress.sh <fqdn>
 | `gh attestation verify` sobre la imagen publicada | Correcta, con el commit de la firma |
 | `actionlint` y `shellcheck` | Sin hallazgos |
 
+## Restauración automática en Azure · 2026-11-09
+
+`k8s-deliver.sh` ejecutado por SSH en `eventos-development`. El workflow todavía no se ejecutó. Se usaron las imágenes publicadas `bd50b3cf03f2` y `d203a4f1499c`.
+
+| Prueba | Resultado |
+|---|---|
+| Entrega con `BIND_ADDR` inválido solo en la API | La API vuelve a la revisión capturada; `event-service-worker no cambió` y conserva revisión y Pod; smoke correcto; código de salida 1; 185 s |
+| Smoke fallido cuando la entrega cambió API y worker | Ambos vuelven a la revisión capturada, digest comprobado y smoke correcto; código de salida 1; 32 s |
+| Entrega correcta de otra versión | `ENTREGA_OK`, digest `d203a4f1499c` en API y worker |
+
+Las lecturas aumentaron solo por los smoke, sin pérdidas.
+
 ## Pendiente
 
-- [ ] Identidad de despliegue en Azure, environments y `DEPLOY_CLIENT_ID`.
+- [x] Identidad de despliegue en Azure y environments.
+- [ ] Confirmar `DEPLOY_CLIENT_ID`.
 - [ ] Primera entrega real, con aprobación y certificado emitido.
 - [ ] Demostrar en Actions que un smoke fallido impide completar la entrega.
