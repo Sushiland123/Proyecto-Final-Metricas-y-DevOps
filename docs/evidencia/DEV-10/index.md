@@ -40,7 +40,7 @@ Esta cuenta no puede pedir un Secret a la API, pero tiene un acceso indirecto: p
 
 [`k8s-verify-security.sh`](../../../scripts/k8s-verify-security.sh) comprueba permisos con `kubectl auth can-i`, contexto de los Pods, rechazo de un Pod privilegiado, ausencia de valores de Secrets en logs y aislamiento de red. Compara los valores dentro del proceso sin imprimirlos. Revisa los logs disponibles de API, worker, PostgreSQL y los Pods de migración, que se eliminan a las 24 h de terminar el Job.
 
-[`k8s-secrets.sh`](../../../scripts/k8s-secrets.sh) elimina lo creado en su propio intento si falla a medias, para no dejar un conjunto parcial con contraseñas perdidas.
+[`k8s-secrets.sh`](../../../scripts/k8s-secrets.sh) crea los Secrets de uno en uno y guarda el UID de cada uno. Si falla a medias, elimina solo esos objetos, con precondición de UID, para no borrar credenciales ajenas ni un reemplazo. Un error de consulta o de permisos detiene el script; no se interpreta como ausencia.
 
 Para el ingreso, la sonda recibe durante la prueba una NetworkPolicy temporal que le abre la salida solo hacia la API, PostgreSQL y un puerto de control. Sin ella, la conexión se cortaría por el egreso de la propia sonda y la prueba no demostraría nada sobre el ingreso. El puerto de control confirma que la política temporal ya rige antes de evaluar el rechazo. Al terminar se eliminan el Pod y la política.
 
@@ -82,5 +82,18 @@ La tabla anterior corresponde a la primera versión del script. La versión corr
 | Logs revisados | API, worker, PostgreSQL y 2 Pods de migración, sin valores de Secrets |
 
 El control negativo quitó `Ingress` de `default-deny` y eliminó `postgres-from-event-service`. Se restauró aplicando el manifiesto `foundation`.
+
+### Creación parcial y ejecuciones concurrentes
+
+`k8s-secrets.sh` contra el API real del clúster, en un namespace desechable ya eliminado, con fallas provocadas por un envoltorio de `kubectl`. La salida no incluyó ningún valor.
+
+| Prueba | Resultado |
+|---|---|
+| Falla después de crear el primer Secret | Código 1 y 0 Secrets restantes; el reintento crea los 3, con contraseñas coherentes entre Secrets |
+| Repetir con los 3 creados | No modifica nada; mismos UID |
+| Un Secret preexistente | Código 1; ese Secret conserva su UID |
+| Otro proceso reemplaza el objeto antes de la limpieza | La precondición de UID lo protege: el reemplazo se conserva y se avisa |
+| Error de consulta | Código 1; no se crea nada |
+| Dos ejecuciones concurrentes, 5 rondas | En cada ronda una gana y la otra termina con `AlreadyExists`; quedan 3 Secrets coherentes |
 
 La misma comprobación debe repetirse en production cuando tenga workloads. Sin Pods de aplicación, el control falla por falta de evidencia.
