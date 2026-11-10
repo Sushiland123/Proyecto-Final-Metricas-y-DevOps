@@ -33,8 +33,13 @@ random_hex() {
 
 found=0
 for secret in $secrets; do
+  # Un error de consulta o de permisos no significa que el Secret no exista.
   # shellcheck disable=SC2086 # KUBECTL puede tener varias palabras, como "sudo k3s kubectl".
-  if $kubectl_cmd -n "$namespace" get secret "$secret" >/dev/null 2>&1; then
+  if ! existing=$($kubectl_cmd -n "$namespace" get secret "$secret" --ignore-not-found -o name); then
+    echo "$namespace: no se pudo consultar $secret; no se modifica nada." >&2
+    exit 1
+  fi
+  if [ -n "$existing" ]; then
     found=$((found + 1))
   fi
 done
@@ -56,30 +61,49 @@ runtime_password=$(random_hex)
 producer_key=$(random_hex)
 analyst_key=$(random_hex)
 
-# Kubernetes no crea una lista en una sola transacción: puede quedar una parte creada.
-# shellcheck disable=SC2086
-if ! $kubectl_cmd -n "$namespace" create -f - >/dev/null <<EOF
-{"apiVersion": "v1", "kind": "List", "items": [
-  {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "postgres-credentials"}, "type": "Opaque",
-   "stringData": {"POSTGRES_USER": "bootstrap_admin", "POSTGRES_DB": "eventos", "POSTGRES_PASSWORD": "$admin_password",
-                  "EVENT_MIGRATION_PASSWORD": "$migration_password", "EVENT_RUNTIME_PASSWORD": "$runtime_password"}},
-  {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "event-service-migration"}, "type": "Opaque",
-   "stringData": {"DATABASE_URL": "postgresql://eventos_migrator:$migration_password@postgres:5432/eventos"}},
-  {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "event-service-credentials"}, "type": "Opaque",
-   "stringData": {"DATABASE_URL": "postgresql://eventos_runtime:$runtime_password@postgres:5432/eventos",
-                  "EVENT_PRODUCER_KEY": "$producer_key", "EVENT_ANALYST_KEY": "$analyst_key"}}
-]}
-EOF
-then
-  # Arriba se comprobó que no existía ninguno: lo que haya ahora lo creó esta ejecución.
-  echo "$namespace: falló la creación; se eliminan los Secrets creados en este intento." >&2
-  for secret in $secrets; do
+created=""
+
+# Crea un Secret desde stdin y recuerda su UID. Create falla si el nombre ya existe, así que
+# dos ejecuciones simultáneas no pueden crear el mismo objeto.
+create_secret() {
+  # shellcheck disable=SC2086
+  uid=$($kubectl_cmd -n "$namespace" create -o jsonpath='{.metadata.uid}' -f -) || return 1
+  [ -n "$uid" ] || return 1
+  created="$created $1:$uid"
+}
+
+# Elimina solo lo creado en este intento. La precondición de UID impide borrar un reemplazo
+# que otra ejecución haya creado con el mismo nombre.
+abort_and_clean() {
+  echo "$namespace: falló la creación; se eliminan solo los Secrets de este intento." >&2
+  for item in $created; do
+    name=${item%%:*}
+    uid=${item#*:}
     # shellcheck disable=SC2086
-    if ! $kubectl_cmd -n "$namespace" delete secret "$secret" --ignore-not-found >/dev/null 2>&1; then
-      echo "$namespace: no se pudo eliminar $secret. Revisar a mano." >&2
+    if ! printf '{"kind":"DeleteOptions","apiVersion":"v1","preconditions":{"uid":"%s"}}' "$uid" |
+      $kubectl_cmd delete --raw "/api/v1/namespaces/$namespace/secrets/$name" -f - >/dev/null 2>&1; then
+      echo "$namespace: no se eliminó $name: cambió o no se pudo borrar. Revisar a mano." >&2
     fi
   done
   exit 1
-fi
+}
+
+# Kubernetes no crea varios objetos en una transacción: se crean de uno en uno.
+create_secret postgres-credentials <<EOF || abort_and_clean
+{"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "postgres-credentials"}, "type": "Opaque",
+ "stringData": {"POSTGRES_USER": "bootstrap_admin", "POSTGRES_DB": "eventos", "POSTGRES_PASSWORD": "$admin_password",
+                "EVENT_MIGRATION_PASSWORD": "$migration_password", "EVENT_RUNTIME_PASSWORD": "$runtime_password"}}
+EOF
+
+create_secret event-service-migration <<EOF || abort_and_clean
+{"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "event-service-migration"}, "type": "Opaque",
+ "stringData": {"DATABASE_URL": "postgresql://eventos_migrator:$migration_password@postgres:5432/eventos"}}
+EOF
+
+create_secret event-service-credentials <<EOF || abort_and_clean
+{"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "event-service-credentials"}, "type": "Opaque",
+ "stringData": {"DATABASE_URL": "postgresql://eventos_runtime:$runtime_password@postgres:5432/eventos",
+                "EVENT_PRODUCER_KEY": "$producer_key", "EVENT_ANALYST_KEY": "$analyst_key"}}
+EOF
 
 echo "$namespace: Secrets creados."

@@ -40,7 +40,7 @@ Esta cuenta no puede pedir un Secret a la API, pero tiene un acceso indirecto: p
 
 [`k8s-verify-security.sh`](../../../scripts/k8s-verify-security.sh) comprueba permisos con `kubectl auth can-i`, contexto de los Pods, rechazo de un Pod privilegiado, ausencia de valores de Secrets en logs y aislamiento de red. Compara los valores dentro del proceso sin imprimirlos. Revisa los logs disponibles de API, worker, PostgreSQL y los Pods de migración, que se eliminan a las 24 h de terminar el Job.
 
-[`k8s-secrets.sh`](../../../scripts/k8s-secrets.sh) elimina lo creado en su propio intento si falla a medias, para no dejar un conjunto parcial con contraseñas perdidas.
+[`k8s-secrets.sh`](../../../scripts/k8s-secrets.sh) crea los Secrets de uno en uno y guarda el UID de cada uno. Si falla a medias, elimina solo esos objetos, con precondición de UID, para no borrar credenciales ajenas ni un reemplazo. Un error de consulta o de permisos detiene el script; no se interpreta como ausencia.
 
 Para el ingreso, la sonda recibe durante la prueba una NetworkPolicy temporal que le abre la salida solo hacia la API, PostgreSQL y un puerto de control. Sin ella, la conexión se cortaría por el egreso de la propia sonda y la prueba no demostraría nada sobre el ingreso. El puerto de control confirma que la política temporal ya rige antes de evaluar el rechazo. Al terminar se eliminan el Pod y la política.
 
