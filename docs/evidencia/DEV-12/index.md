@@ -14,11 +14,12 @@
    sudo k3s kubectl -n eventos-production logs deployment/event-service-api --tail=50
    ```
 
-3. **Revertir.** `KUBECTL="sudo k3s kubectl" bash scripts/k8s-rollback.sh production`. Vuelve API y worker a la revisión anterior y ejecuta el smoke.
-4. **Verificar.** El script termina con `ROLLBACK_OK` y el digest activo. Confirmar los Pods con `get pods`.
-5. **Registrar** causa, digest anterior, digest restaurado y tiempo.
+3. **Elegir la versión sana.** `KUBECTL="sudo k3s kubectl" bash scripts/k8s-rollback.sh production` sin imagen lista las versiones conservadas. Su firma se comprueba con `gh attestation verify`.
+4. **Revertir.** `KUBECTL="sudo k3s kubectl" bash scripts/k8s-rollback.sh production <imagen@sha256:...>`. Solo modifica los Deployments que no estén sanos en esa versión: un worker que no cambió no retrocede.
+5. **Verificar.** El script comprueba rollout, digest en los Pods y smoke, y termina con `ROLLBACK_OK`. Confirmar los Pods con `get pods`.
+6. **Registrar** causa, digest anterior, digest restaurado y tiempo.
 
-`k8s-deliver.sh` hace los pasos 3 y 4 solo cuando falla una entrega.
+`k8s-deliver.sh` restaura y comprueba por sí solo cuando falla una entrega, usando las revisiones que capturó antes de empezar.
 
 ## Qué no hace un rollback
 
@@ -28,7 +29,7 @@
 
 ## Simulacro
 
-[`k8s-rollback-drill.sh`](../../../scripts/k8s-rollback-drill.sh) solo actúa sobre development. Provoca una imagen inexistente y luego una configuración inválida, recupera y compara el número de lecturas.
+[`k8s-rollback-drill.sh`](../../../scripts/k8s-rollback-drill.sh) solo actúa sobre development. Provoca solo en la API una imagen inexistente y luego una configuración inválida, recupera, comprueba que el worker no se modificó y compara el número de lecturas.
 
 ## Resultado obtenido · 2026-11-09, ensayo local
 
