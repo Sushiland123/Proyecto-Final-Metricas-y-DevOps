@@ -1,6 +1,6 @@
 #!/bin/bash
 # DEV-10: comprueba en el clúster los controles de un ambiente y reporta todas las fallas.
-# No lee el valor de ningún Secret. Crea un Pod temporal de prueba y lo elimina al terminar.
+# No lee el valor de ningún Secret. Crea un Pod y una NetworkPolicy temporales y los elimina al terminar.
 #
 # Uso: scripts/k8s-verify-security.sh <development|production>
 #      KUBECTL="sudo k3s kubectl" scripts/k8s-verify-security.sh development
@@ -21,6 +21,7 @@ kube() { "${kubectl_cmd[@]}" "$@"; }
 # Imagen de prueba: solo se usa para intentar conexiones de red y no llega a producción.
 PROBE_IMAGE=docker.io/library/busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
 probe_pod="netpol-probe-$$"
+probe_policy="netpol-probe-egress-$$"
 failures=0
 
 check() {
@@ -95,15 +96,40 @@ EOF
   kube -n "$namespace" wait --for=condition=Ready "pod/$probe_pod" --timeout=120s
 }
 
-remove_probe_pod() {
+# Abre la salida de la sonda solo hacia la API, PostgreSQL y un puerto de control. Sin esto,
+# el bloqueo se debería al egreso de la sonda y no demostraría que el ingreso rechaza la conexión.
+allow_probe_egress() {
+  kube -n "$namespace" apply -f - <<EOF
+{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "$probe_policy"},
+ "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "netpol-probe"}}, "policyTypes": ["Egress"],
+  "egress": [
+   {"to": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "postgres"}}}], "ports": [{"protocol": "TCP", "port": 5432}]},
+   {"to": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "event-service", "app.kubernetes.io/component": "api"}}}], "ports": [{"protocol": "TCP", "port": 8000}]},
+   {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}], "ports": [{"protocol": "TCP", "port": 9153}]}
+  ]}}
+EOF
+}
+
+remove_probe_resources() {
+  kube -n "$namespace" delete networkpolicy "$probe_policy" --ignore-not-found >/dev/null 2>&1
   kube -n "$namespace" delete pod "$probe_pod" --ignore-not-found --grace-period=0 --force >/dev/null 2>&1
 }
-trap remove_probe_pod EXIT
+trap remove_probe_resources EXIT
 
 # Se usan direcciones IP: un fallo de DNS no debe contarse como conexión bloqueada.
 # timeout es necesario porque nc no respeta su propio límite si el paquete se descarta.
 probe_reaches() {
   kube -n "$namespace" exec "$probe_pod" -- timeout 6 nc -z "$1" "$2"
+}
+
+# La política temporal tarda unos segundos en aplicarse.
+probe_eventually_reaches() {
+  local attempt
+  for attempt in $(seq 1 10); do
+    probe_reaches "$1" "$2" && return 0
+    sleep 2
+  done
+  return 1
 }
 
 echo "== Permisos de Kubernetes ($namespace)"
@@ -133,12 +159,21 @@ check "ningún valor de los Secrets aparece en los logs de API y worker" secret_
 echo "== Red"
 if create_probe_pod >/dev/null 2>&1; then
   postgres_ip=$(kube -n "$namespace" get pod postgres-0 -o jsonpath='{.status.podIP}')
-  api_ip=$(kube -n "$namespace" get service event-service -o jsonpath='{.spec.clusterIP}')
+  api_ip=$(kube -n "$namespace" get pods -l app.kubernetes.io/component=api \
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}')
   dns_ip=$(kube -n kube-system get service kube-dns -o jsonpath='{.spec.clusterIP}')
   check "control: la prueba sí alcanza lo permitido (DNS)" probe_reaches "$dns_ip" 53
-  check "un Pod ajeno no alcanza PostgreSQL" not probe_reaches "$postgres_ip" 5432
-  check "un Pod ajeno no alcanza la API" not probe_reaches "$api_ip" 8000
-  check "un Pod no sale a Internet" not probe_reaches 1.1.1.1 443
+  check "egreso: sin política temporal la sonda no abre otro puerto" not probe_reaches "$dns_ip" 9153
+  check "egreso: un Pod no sale a Internet" not probe_reaches 1.1.1.1 443
+  # Las pruebas de ingreso solo valen si la salida de la sonda quedó abierta.
+  if allow_probe_egress >/dev/null 2>&1 && probe_eventually_reaches "$dns_ip" 9153; then
+    echo "OK    control: la política temporal abre la salida de la sonda"
+    check "ingreso: PostgreSQL rechaza a un Pod ajeno con salida permitida" not probe_reaches "$postgres_ip" 5432
+    check "ingreso: la API rechaza a un Pod ajeno con salida permitida" not probe_reaches "$api_ip" 8000
+  else
+    echo "FALLA no se pudo abrir la salida de la sonda: el ingreso queda sin comprobar"
+    failures=$((failures + 1))
+  fi
 else
   echo "FALLA no se pudo crear el Pod de prueba"
   failures=$((failures + 1))

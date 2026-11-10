@@ -11,7 +11,7 @@
 3. **Aprobación:** el environment `production` espera a un revisor.
 4. **production:** el mismo digest y los mismos pasos. No se reconstruye nada.
 
-Si falla la migración, los workloads no cambian. Si falla el rollout o el smoke, [`k8s-deliver.sh`](../../../scripts/k8s-deliver.sh) vuelve a la versión anterior y el job falla, así que production no se ejecuta.
+Si falla la migración, los workloads no cambian. Si falla el rollout o el smoke, [`k8s-deliver.sh`](../../../scripts/k8s-deliver.sh) restaura cada Deployment que la entrega cambió a la revisión capturada antes de empezar, comprueba su digest y repite el smoke. Un Deployment que no cambió no se toca. El job falla, así que production no se ejecuta.
 
 ## Decisiones
 
