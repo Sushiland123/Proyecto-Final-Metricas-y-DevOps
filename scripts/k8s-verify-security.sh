@@ -122,8 +122,7 @@ probe_reaches() {
 
 # La política temporal tarda unos segundos en aplicarse.
 probe_eventually_reaches() {
-  local attempt
-  for attempt in $(seq 1 10); do
+  for _ in $(seq 1 10); do
     probe_reaches "$1" "$2" && return 0
     sleep 2
   done
