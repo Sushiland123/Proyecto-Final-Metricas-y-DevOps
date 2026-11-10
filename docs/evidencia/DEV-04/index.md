@@ -30,12 +30,13 @@ gh attestation verify oci://<imagen>@<digest> --repo marchelo23/Proyecto-Final-M
 
 Se probó con un registro local temporal la parte que no depende de GHCR: publicar, descargar por digest y ejecutar `verify-image.sh` sobre esa referencia. El resultado fue correcto. `actionlint` no reportó errores en el workflow.
 
-## Pendiente
+## Resultado en `main`
 
-- [ ] Primera ejecución real en `main`: solo puede ocurrir después del merge.
-- [ ] Enlazar la ejecución, el digest y la attestation.
-- [ ] Definir la visibilidad del paquete en GHCR antes de desplegar. Si es privado, el clúster necesita un `imagePullSecret`.
-- [ ] Comprobar que la imagen desplegada corresponde al commit (entrega en K3s).
+- Publicación: commit `ad1c0c6`, [ejecución de publicación](https://github.com/marchelo23/Proyecto-Final-Metricas-y-DevOps/actions/runs/42542020614), digest `sha256:bd50b3cf03f23eb754c3635110222330ac6cba76b404101020eb091ef2845095`.
+- Tag `sha-ad1c0c6`, sin `latest`. El artefacto `image-publication-<commit>` guarda el vínculo commit → ejecución → digest.
+- Firma comprobada con `gh attestation verify`; el `gitCommit` firmado es `ad1c0c65a1e4d225f9e028eb35d665159f286135`.
+- El paquete de GHCR es público: el clúster lo descarga sin credenciales.
+- La imagen desplegada corresponde al commit: el `imageID` de los Pods en Azure es ese digest ([DEV-09](../DEV-09/index.md)).
 
 ## Limitaciones
 
