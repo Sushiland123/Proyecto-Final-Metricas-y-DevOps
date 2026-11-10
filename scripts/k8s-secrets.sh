@@ -56,8 +56,9 @@ runtime_password=$(random_hex)
 producer_key=$(random_hex)
 analyst_key=$(random_hex)
 
+# Kubernetes no crea una lista en una sola transacción: puede quedar una parte creada.
 # shellcheck disable=SC2086
-$kubectl_cmd -n "$namespace" create -f - >/dev/null <<EOF
+if ! $kubectl_cmd -n "$namespace" create -f - >/dev/null <<EOF
 {"apiVersion": "v1", "kind": "List", "items": [
   {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "postgres-credentials"}, "type": "Opaque",
    "stringData": {"POSTGRES_USER": "bootstrap_admin", "POSTGRES_DB": "eventos", "POSTGRES_PASSWORD": "$admin_password",
@@ -69,5 +70,16 @@ $kubectl_cmd -n "$namespace" create -f - >/dev/null <<EOF
                   "EVENT_PRODUCER_KEY": "$producer_key", "EVENT_ANALYST_KEY": "$analyst_key"}}
 ]}
 EOF
+then
+  # Arriba se comprobó que no existía ninguno: lo que haya ahora lo creó esta ejecución.
+  echo "$namespace: falló la creación; se eliminan los Secrets creados en este intento." >&2
+  for secret in $secrets; do
+    # shellcheck disable=SC2086
+    if ! $kubectl_cmd -n "$namespace" delete secret "$secret" --ignore-not-found >/dev/null 2>&1; then
+      echo "$namespace: no se pudo eliminar $secret. Revisar a mano." >&2
+    fi
+  done
+  exit 1
+fi
 
 echo "$namespace: Secrets creados."
