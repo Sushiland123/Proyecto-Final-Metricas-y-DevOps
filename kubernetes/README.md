@@ -13,6 +13,8 @@
 | `Deployment/event-service-api` | `serve`, Service interno en 8000, readiness DB y liveness del proceso |
 | `Deployment/event-service-worker` | `process`, sin Service ni probes HTTP inexistentes, solo credencial DB |
 | `ServiceAccount/event-service` | Sin token montado ni permisos RBAC concedidos |
+| `ServiceAccount/event-service-deployer` | Solo actualiza workloads y crea Jobs de su namespace; sin acceso a la API de Secrets (ver alcance en DEV-10) |
+| `NetworkPolicy` | Todo denegado salvo DNS y event-service → PostgreSQL:5432 |
 
 La imagen de aplicación se exige por digest del repositorio GHCR del proyecto. PostgreSQL también se exige por digest del repositorio oficial. El renderer rechaza tags, repositorios distintos y ambientes arbitrarios. No instala herramientas ni invoca `kubectl`, Azure o Docker.
 
@@ -29,7 +31,7 @@ Los límites iniciales son **estimaciones, no mediciones de capacidad**: API/wor
 
 ## Secrets por namespace (fuera de Git)
 
-Crear tres archivos locales protegidos (`umask 077`), **fuera del checkout** y con un editor que no registre su contenido en el historial. Los archivos para `--from-env-file` usan `CLAVE=valor`, sin `export` ni comillas de shell. No pegar valores en issues, comandos CLI, logs o capturas.
+`bash scripts/k8s-secrets.sh <ambiente>` crea los tres Secrets con valores aleatorios distintos por ambiente. Los valores no pasan por argumentos, archivos ni la salida del comando. Si ya existen no los modifica, y si existe solo una parte se detiene, porque regenerarlos dejaría contraseñas distintas a las de los roles de la base. En la VM: `KUBECTL="sudo k3s kubectl" sh scripts/k8s-secrets.sh development`.
 
 | Secret | Claves requeridas |
 |---|---|
@@ -41,7 +43,7 @@ Las contraseñas de los DSN deben corresponder a las de los roles del primer Sec
 
 **El init solo corre con volumen vacío.** Cambiar el Secret no cambia contraseñas en una DB existente ni vuelve a ejecutar el script. No resetear el volumen si falla el init: inspeccionar y recuperar con el DBA. Para rotaciones o una BD preexistente se necesita un procedimiento aparte y respaldo; no automatizar una recreación.
 
-El renderer no lee estos archivos ni produce Secrets. La autorización/RBAC, NetworkPolicies, rotación y pruebas negativas completas siguen en #16. No se publican Services al exterior; el Ingress/TLS y entrega controlada corresponden a #11.
+El renderer no produce Secrets. Red denegada por defecto, cuenta de despliegue limitada y qué protege un Secret: [DEV-10](../docs/evidencia/DEV-10/index.md). No se publican Services al exterior; el Ingress/TLS y entrega controlada corresponden a #11.
 
 ## Orden de despliegue manual (no ejecutado por el PR)
 
@@ -64,9 +66,7 @@ Un digest inválido termina con error, sin renderizar ni aplicar recursos. Revis
 ```bash
 # 1. Namespace para poder crear Secrets ANTES de arrancar PostgreSQL.
 kubectl create namespace "$NS" --dry-run=client -o json | kubectl apply -f -
-kubectl -n "$NS" create secret generic postgres-credentials --from-env-file=/ruta/privada/postgres.env
-kubectl -n "$NS" create secret generic event-service-migration --from-env-file=/ruta/privada/migration.env
-kubectl -n "$NS" create secret generic event-service-credentials --from-env-file=/ruta/privada/application.env
+KUBECTL=kubectl sh scripts/k8s-secrets.sh "$ENVIRONMENT"
 
 # 2. Base y DB. Los Secrets anteriores no se regeneran en un reintento.
 kubectl apply --dry-run=server -f artifacts/kubernetes/foundation.json

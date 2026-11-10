@@ -90,6 +90,29 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(api["livenessProbe"]["httpGet"]["path"], "/health/live")
         self.assertEqual(api["readinessProbe"]["httpGet"]["path"], "/health/ready")
 
+    def test_network_is_denied_by_default_with_only_database_exceptions(self):
+        policies = {
+            item["metadata"]["name"]: item["spec"]
+            for item in self.stage("foundation")
+            if item["kind"] == "NetworkPolicy"
+        }
+        self.assertEqual(policies["default-deny"]["podSelector"], {})
+        self.assertEqual(set(policies["default-deny"]["policyTypes"]), {"Ingress", "Egress"})
+        self.assertNotIn("ingress", policies["default-deny"])
+        self.assertNotIn("egress", policies["default-deny"])
+        for name in ("postgres-from-event-service", "event-service-to-postgres"):
+            rules = policies[name].get("ingress") or policies[name]["egress"]
+            self.assertEqual(rules[0]["ports"], [{"protocol": "TCP", "port": 5432}])
+
+    def test_deployer_cannot_read_secrets_or_escalate(self):
+        foundation = self.stage("foundation")
+        role = next(item for item in foundation if item["kind"] == "Role")
+        for rule in role["rules"]:
+            self.assertNotIn("secrets", rule["resources"])
+            self.assertNotIn("*", rule["resources"] + rule["verbs"] + rule["apiGroups"])
+            self.assertNotIn("delete", rule["verbs"])
+        self.assertFalse(any(item["kind"].startswith("Cluster") for item in foundation))
+
 
 if __name__ == "__main__":
     unittest.main()

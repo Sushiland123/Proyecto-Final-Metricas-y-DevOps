@@ -2,10 +2,10 @@ name: Kubernetes manifests
 
 on:
   pull_request:
-    paths: ['kubernetes/**', 'scripts/render-k8s.py', 'scripts/test-postgres-init.py', 'scripts/tests/test_k8s_render.py', '.github/workflows/kubernetes.yml']
+    paths: ['kubernetes/**', 'scripts/render-k8s.py', 'scripts/k8s-*.sh', 'scripts/test-postgres-init.py', 'scripts/tests/test_k8s_render.py', '.github/workflows/kubernetes.yml']
   push:
     branches: [main]
-    paths: ['kubernetes/**', 'scripts/render-k8s.py', 'scripts/test-postgres-init.py', 'scripts/tests/test_k8s_render.py', '.github/workflows/kubernetes.yml']
+    paths: ['kubernetes/**', 'scripts/render-k8s.py', 'scripts/k8s-*.sh', 'scripts/test-postgres-init.py', 'scripts/tests/test_k8s_render.py', '.github/workflows/kubernetes.yml']
 
 permissions:
   contents: read
@@ -20,8 +20,10 @@ jobs:
           persist-credentials: false
       - name: Offline deployment contracts (no cluster or credentials)
         run: python3 -m unittest discover -s scripts/tests -p test_k8s_render.py -v
-      - name: PostgreSQL init script syntax
-        run: bash -n kubernetes/postgres-init.sh
+      - name: Shell script syntax
+        run: |
+          bash -n kubernetes/postgres-init.sh
+          for script in scripts/k8s-*.sh; do bash -n "$script"; done
       - name: Install checksum-pinned kubeconform
         run: |
           curl --fail --location --silent --show-error https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz -o "$RUNNER_TEMP/kubeconform.tar.gz"
