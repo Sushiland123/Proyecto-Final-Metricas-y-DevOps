@@ -83,4 +83,17 @@ La tabla anterior corresponde a la primera versión del script. La versión corr
 
 El control negativo quitó `Ingress` de `default-deny` y eliminó `postgres-from-event-service`. Se restauró aplicando el manifiesto `foundation`.
 
+### Creación parcial y ejecuciones concurrentes
+
+`k8s-secrets.sh` contra el API real del clúster, en un namespace desechable ya eliminado, con fallas provocadas por un envoltorio de `kubectl`. La salida no incluyó ningún valor.
+
+| Prueba | Resultado |
+|---|---|
+| Falla después de crear el primer Secret | Código 1 y 0 Secrets restantes; el reintento crea los 3, con contraseñas coherentes entre Secrets |
+| Repetir con los 3 creados | No modifica nada; mismos UID |
+| Un Secret preexistente | Código 1; ese Secret conserva su UID |
+| Otro proceso reemplaza el objeto antes de la limpieza | La precondición de UID lo protege: el reemplazo se conserva y se avisa |
+| Error de consulta | Código 1; no se crea nada |
+| Dos ejecuciones concurrentes, 5 rondas | En cada ronda una gana y la otra termina con `AlreadyExists`; quedan 3 Secrets coherentes |
+
 La misma comprobación debe repetirse en production cuando tenga workloads. Sin Pods de aplicación, el control falla por falta de evidencia.
