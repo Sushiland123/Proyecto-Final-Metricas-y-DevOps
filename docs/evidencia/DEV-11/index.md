@@ -42,7 +42,22 @@ Superar el límite de memoria provoca `OOMKilled` y un reinicio. Superar el de C
 
 Una imagen construida desde Windows puede traer los `.sql` con CRLF, y SQLx rechazaría una base migrada con LF. La imagen publicada por CI no tiene este problema.
 
+## Resultado en Azure · 2026-11-09
+
+VM `Standard_B2s_v2`, namespace `eventos-development`, imagen publicada `sha256:bd50b3cf…`, que todavía no incluye `worker-health`. El generador de carga corría dentro del mismo nodo, por eso la CPU del nodo llegó a 99 %.
+
+| Workload | Reposo | Durante la carga (128 peticiones/s) |
+|---|---|---|
+| API | 1m / 1Mi | 73m / 7Mi |
+| Worker | 5m / 1Mi | 5m / 1Mi |
+| PostgreSQL | 23m / 25Mi | 122m / 40Mi |
+| Nodo completo | 114m / 1773Mi | 1990m / 1871Mi |
+
+Con estos datos los requests actuales quedan justificados como reserva holgada. El nodo usa 23 % de su memoria, lo que deja espacio para la observabilidad. No se reducen hasta medir con ella instalada.
+
+Con PostgreSQL detenido, la API pasó a `0/1`, salió del endpoint y no se reinició. **El worker publicado siguió en `1/1`**: sin probes no refleja la caída de la base, que es lo que corrige este PR.
+
 ## Pendiente
 
-- [ ] Repetir las pruebas y la medición en Azure, y ajustar requests y limits con esos datos.
-- [ ] Enlazar la evidencia. La imagen con `worker-health` solo existe después de integrar este PR.
+- [ ] Integrar este PR y entregar la imagen con `worker-health`.
+- [ ] Repetir en Azure la caída de la base y la falla de liveness del worker.
