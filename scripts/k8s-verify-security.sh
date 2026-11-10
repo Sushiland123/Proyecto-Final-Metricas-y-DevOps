@@ -65,10 +65,12 @@ EOF
 
 secret_values_not_in_logs() {
   # Compara dentro de este proceso: los valores nunca se imprimen ni van en argumentos.
-  local secret value key logs component keys_template
+  local secret value key logs keys_template
   # shellcheck disable=SC2016 # Plantilla de kubectl, no expansión del shell.
   keys_template='go-template={{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
-  logs=$(for component in api worker; do kube -n "$namespace" logs "deployment/event-service-$component" --tail=-1 || exit 1; done 2>/dev/null) || return 1
+  # Incluye API, worker, PostgreSQL y los Pods de migración que aún existan.
+  logs=$(kube -n "$namespace" logs -l 'app.kubernetes.io/name in (event-service,postgres)' \
+    --tail=-1 --all-containers --prefix=false --max-log-requests=20 2>/dev/null) || return 1
   # Sin logs no hay nada que comparar: el control no debe pasar sin evidencia.
   [[ -n "$logs" ]] || return 1
   for secret in event-service-credentials event-service-migration postgres-credentials; do
@@ -153,19 +155,22 @@ check "los Pods usan el ServiceAccount previsto, sin token, no root y con raíz 
 check "la política restricted rechaza un Pod privilegiado" privileged_pod_is_rejected
 
 echo "== Secretos"
-check "ningún valor de los Secrets aparece en los logs de API y worker" secret_values_not_in_logs
+check "ningún valor de los Secrets aparece en los logs de API, worker, PostgreSQL y migración" secret_values_not_in_logs
 
 echo "== Red"
 if create_probe_pod >/dev/null 2>&1; then
-  postgres_ip=$(kube -n "$namespace" get pod postgres-0 -o jsonpath='{.status.podIP}')
+  postgres_ip=$(kube -n "$namespace" get pod postgres-0 -o jsonpath='{.status.podIP}' 2>/dev/null)
   api_ip=$(kube -n "$namespace" get pods -l app.kubernetes.io/component=api \
-    --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}')
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
   dns_ip=$(kube -n kube-system get service kube-dns -o jsonpath='{.spec.clusterIP}')
   check "control: la prueba sí alcanza lo permitido (DNS)" probe_reaches "$dns_ip" 53
   check "egreso: sin política temporal la sonda no abre otro puerto" not probe_reaches "$dns_ip" 9153
   check "egreso: un Pod no sale a Internet" not probe_reaches 1.1.1.1 443
-  # Las pruebas de ingreso solo valen si la salida de la sonda quedó abierta.
-  if allow_probe_egress >/dev/null 2>&1 && probe_eventually_reaches "$dns_ip" 9153; then
+  # Las pruebas de ingreso solo valen con destinos reales y con la salida de la sonda abierta.
+  if [[ -z "$postgres_ip" || -z "$api_ip" ]]; then
+    echo "FALLA no se obtuvo la IP de PostgreSQL o de la API: el ingreso queda sin comprobar"
+    failures=$((failures + 1))
+  elif allow_probe_egress >/dev/null 2>&1 && probe_eventually_reaches "$dns_ip" 9153; then
     echo "OK    control: la política temporal abre la salida de la sonda"
     check "ingreso: PostgreSQL rechaza a un Pod ajeno con salida permitida" not probe_reaches "$postgres_ip" 5432
     check "ingreso: la API rechaza a un Pod ajeno con salida permitida" not probe_reaches "$api_ip" 8000
