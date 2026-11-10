@@ -89,7 +89,22 @@ status=$(request POST /v1/readings "$producer_key" \
 for _ in $(seq 1 30); do
   status=$(request GET "/v1/devices/$device/readings?from=$occurred&to=$until" "$analyst_key")
   [[ "$status" == 200 ]] || fail "el histórico devolvió $status"
-  if grep -q "\"event_id\":\"$event\"" "$workdir/body" && grep -Eq '"processed_at":"' "$workdir/body"; then
+  if python3 - "$event" "$workdir/body" <<'PY'
+import json
+import sys
+
+with open(sys.argv[2], encoding="utf-8") as response:
+    readings = json.load(response)
+processed = isinstance(readings, list) and any(
+    isinstance(reading, dict)
+    and reading.get("event_id") == sys.argv[1]
+    and isinstance(reading.get("processed_at"), str)
+    and bool(reading["processed_at"])
+    for reading in readings
+)
+sys.exit(0 if processed else 1)
+PY
+  then
     echo "SMOKE OK: $namespace, lectura $event procesada."
     exit 0
   fi

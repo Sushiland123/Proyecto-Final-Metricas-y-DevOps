@@ -30,39 +30,54 @@ deployer() { kube --as="system:serviceaccount:$namespace:event-service-deployer"
 
 deployments=(event-service-api event-service-worker)
 
-revision_of() {
-  deployer get deployment "$1" --ignore-not-found \
-    -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}'
+template_of() {
+  deployer get deployment "$1" --ignore-not-found -o json | python3 -c '
+import json, sys
+deployment = json.loads(sys.stdin.read() or "{}")
+template = deployment.get("spec", {}).get("template")
+print(json.dumps(template, sort_keys=True) if template is not None else "")'
 }
 
-# Revisión e imagen de cada Deployment, capturadas antes de cambiar nada.
-declare -A previous_revision previous_image
+# El template real cambia antes de que el controlador publique una revisión nueva.
+# Capturarlo permite restaurar incluso un apply parcial con anotaciones todavía viejas.
+declare -A previous_template previous_image
 for deployment in "${deployments[@]}"; do
-  previous_revision[$deployment]=$(revision_of "$deployment")
-  previous_image[$deployment]=$(deployer get deployment "$deployment" --ignore-not-found \
-    -o jsonpath='{.spec.template.spec.containers[0].image}')
+  previous_template[$deployment]=$(template_of "$deployment")
+  previous_image[$deployment]=$(printf '%s' "${previous_template[$deployment]}" | python3 -c '
+import json, sys
+template = json.loads(sys.stdin.read() or "{}")
+containers = template.get("spec", {}).get("containers", [])
+print(containers[0]["image"] if containers else "")')
 done
 
 # Un Deployment que esta entrega no cambió se deja como está: deshacerlo lo haría retroceder.
 roll_back() {
-  local deployment revision restored=false failed=false
+  local deployment template current restored=false failed=false
   for deployment in "${deployments[@]}"; do
-    revision=${previous_revision[$deployment]}
-    if [[ -z "$revision" ]]; then
+    template=${previous_template[$deployment]}
+    if [[ -z "$template" ]]; then
       echo "$deployment no existía antes de esta entrega: no hay a qué volver." >&2
       continue
     fi
-    if [[ "$(revision_of "$deployment")" == "$revision" ]]; then
+    if ! current=$(template_of "$deployment"); then
+      echo "No se pudo comprobar el template de $deployment." >&2
+      failed=true
+      continue
+    fi
+    if [[ "$current" == "$template" ]]; then
       echo "$deployment no cambió: se deja como está." >&2
       continue
     fi
-    echo "Restaurando $deployment a la revisión $revision: ${previous_image[$deployment]}" >&2
+    echo "Restaurando el template capturado de $deployment: ${previous_image[$deployment]}" >&2
     restored=true
-    deployer rollout undo "deployment/$deployment" --to-revision="$revision" || failed=true
+    printf '[{"op":"replace","path":"/spec/template","value":%s}]' "$template" |
+      deployer patch "deployment/$deployment" --type=json --patch-file=/dev/stdin || failed=true
     deployer rollout status "deployment/$deployment" --timeout=180s || failed=true
     wait_for_digest "${deployment#event-service-}" "${previous_image[$deployment]##*@}" || failed=true
   done
-  [[ "$restored" == true ]] || return 0
+  if [[ "$restored" != true && "$failed" != true ]]; then
+    return 0
+  fi
   KUBECTL="${kubectl_cmd[*]}" bash "$script_dir/k8s-smoke.sh" "$environment" || failed=true
   if [[ "$failed" == true ]]; then
     echo "ROLLBACK_FALLÓ: la versión anterior no quedó comprobada. Revisar a mano." >&2
@@ -118,8 +133,6 @@ echo "== Rollout de $image"
 deployer apply --dry-run=server -f "$manifests/workloads.json" >/dev/null
 if ! deployer apply -f "$manifests/workloads.json" >/dev/null; then
   echo "No se pudieron aplicar los workloads." >&2
-  # El controlador tarda un momento en registrar la revisión de lo que sí se aplicó.
-  sleep 3
   roll_back
   exit 1
 fi
