@@ -41,6 +41,13 @@
 
 El tiempo total incluye 75 s de espera antes de declarar fallido el rollout. Las lecturas pasaron de 1 a 3: se conservaron las anteriores y se sumaron las de los smoke. El Pod anterior siguió atendiendo durante las dos fallas, porque `maxUnavailable` es 0.
 
-## Pendiente
+## Resultado en Azure · 2026-11-09
 
-- [ ] Ejecutar el simulacro en development en Azure y enlazar la salida.
+Clúster K3s de la VM del proyecto, namespace `eventos-development`, imagen `sha256:bd50b3cf…`.
+
+| Falla provocada | Cómo se detectó | Tiempo total | Solo rollback y smoke |
+|---|---|---|---|
+| Imagen inexistente | `ImagePullBackOff`, el rollout no termina | 81 s | 5 s |
+| `BIND_ADDR` inválido | `CrashLoopBackOff`, el rollout no termina | 81 s | 6 s |
+
+Las lecturas pasaron de 3 a 5 por los smoke, sin pérdidas. Se recuperó el digest `bd50b3cf03f2` y el simulacro terminó con `SIMULACRO_OK`.
