@@ -21,8 +21,14 @@ namespace="eventos-$environment"
 kubectl_cmd=${KUBECTL:-kubectl}
 secrets="postgres-credentials event-service-migration event-service-credentials"
 
+# Sin pipefail en sh, un fallo de od quedaría oculto y crearía credenciales vacías.
 random_hex() {
-  od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
+  value=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+  if [ "${#value}" -ne 64 ]; then
+    echo "No se pudo generar un valor aleatorio." >&2
+    exit 1
+  fi
+  printf '%s' "$value"
 }
 
 found=0
@@ -43,6 +49,7 @@ if [ "$found" -ne 0 ]; then
   exit 1
 fi
 
+# Una asignación simple propaga a set -e el fallo de $(random_hex).
 admin_password=$(random_hex)
 migration_password=$(random_hex)
 runtime_password=$(random_hex)

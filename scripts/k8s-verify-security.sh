@@ -67,7 +67,9 @@ secret_values_not_in_logs() {
   local secret value key logs component keys_template
   # shellcheck disable=SC2016 # Plantilla de kubectl, no expansión del shell.
   keys_template='go-template={{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
-  logs=$(for component in api worker; do kube -n "$namespace" logs "deployment/event-service-$component" --tail=-1; done 2>/dev/null)
+  logs=$(for component in api worker; do kube -n "$namespace" logs "deployment/event-service-$component" --tail=-1 || exit 1; done 2>/dev/null) || return 1
+  # Sin logs no hay nada que comparar: el control no debe pasar sin evidencia.
+  [[ -n "$logs" ]] || return 1
   for secret in event-service-credentials event-service-migration postgres-credentials; do
     while read -r key; do
       value=$(kube -n "$namespace" get secret "$secret" -o "go-template={{index .data \"$key\" | base64decode}}")
