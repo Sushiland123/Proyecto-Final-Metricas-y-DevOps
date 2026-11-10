@@ -33,7 +33,7 @@
 
 ## Resultado obtenido · 2026-11-09, ensayo local
 
-**No es la evidencia final.** K3s `v1.35.2+k3s1` desechable en Docker.
+**No es la evidencia final.** K3s `v1.35.2+k3s1` desechable en Docker, con la primera versión del script.
 
 | Falla provocada | Cómo se detectó | Tiempo total | Solo rollback y smoke | Después |
 |---|---|---|---|---|
@@ -44,11 +44,20 @@ El tiempo total incluye 75 s de espera antes de declarar fallido el rollout. Las
 
 ## Resultado en Azure · 2026-11-09
 
-Clúster K3s de la VM del proyecto, namespace `eventos-development`, imagen `sha256:bd50b3cf…`.
+Clúster K3s de la VM del proyecto, namespace `eventos-development`, imágenes publicadas `bd50b3cf03f2` y `d203a4f1499c`. Esta tabla corresponde al script corregido: el simulacro ya no crea una revisión artificial del worker.
 
-| Falla provocada | Cómo se detectó | Tiempo total | Solo rollback y smoke |
-|---|---|---|---|
-| Imagen inexistente | `ImagePullBackOff`, el rollout no termina | 81 s | 5 s |
-| `BIND_ADDR` inválido | `CrashLoopBackOff`, el rollout no termina | 81 s | 6 s |
+| Falla provocada solo en la API | Cómo se detectó | Tiempo total | Solo rollback y smoke | Worker |
+|---|---|---|---|---|
+| Imagen inexistente | `ImagePullBackOff`, el rollout no termina | 82 s | 6 s | Misma generación, revisión, imagen y Pod |
+| `BIND_ADDR` inválido | `CrashLoopBackOff`, el rollout no termina | 81 s | 5 s | Misma generación, revisión, imagen y Pod |
 
-Las lecturas pasaron de 3 a 5 por los smoke, sin pérdidas. Se recuperó el digest `bd50b3cf03f2` y el simulacro terminó con `SIMULACRO_OK`.
+El tiempo total incluye 75 s de espera antes de declarar fallido el rollout. Las lecturas pasaron de 12865 a 12867 por los smoke, sin pérdidas, y el simulacro terminó con `SIMULACRO_OK`.
+
+| Vuelta manual | Resultado |
+|---|---|
+| De `d203a4f1499c` a `bd50b3cf03f2`, en API y worker | Los dos restaurados, digest comprobado en los Pods, smoke correcto, `ROLLBACK_OK` en 7 s |
+| Repetir con la misma imagen | `ya está sano en esa versión: no se modifica`; generación y Pods iguales |
+
+## Límite
+
+El script considera sana una revisión si tiene el digest pedido y su rollout terminó. Una configuración mala que pase las probes no se detecta ahí: el smoke final falla y hay que revisar a mano.
