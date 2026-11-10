@@ -16,8 +16,22 @@ const WORKER_LIVE_FILE: &str = "live";
 const WORKER_READY_FILE: &str = "ready";
 /// Must exceed the 60 s retry ceiling so a database outage never restarts the worker.
 const WORKER_LIVE_MAX_AGE: Duration = Duration::from_secs(120);
-/// The last successful poll must be this recent for the worker to count as ready.
+/// Grace after the configured polling interval before readiness expires.
 const WORKER_READY_MAX_AGE: Duration = Duration::from_secs(30);
+
+/// Validate the same polling interval for both the processor and its exec probe.
+fn parse_processor_poll_ms(value: &str) -> Result<u64, &'static str> {
+    value
+        .parse()
+        .ok()
+        .filter(|n| (1..=60000).contains(n))
+        .ok_or("Invalid PROCESSOR_POLL_MS")
+}
+
+/// Leave time for the next successful poll even at the maximum supported interval.
+fn worker_ready_max_age(poll_ms: u64) -> Duration {
+    Duration::from_millis(poll_ms) + WORKER_READY_MAX_AGE
+}
 
 /// Record a heartbeat; a failed write surfaces as a failing probe, not as log noise.
 fn touch_heartbeat(directory: Option<&Path>, name: &str) {
@@ -39,7 +53,12 @@ fn heartbeat_is_fresh(path: &Path, max_age: Duration) -> bool {
 fn worker_health(kind: Option<String>) -> Result<(), &'static str> {
     let (name, max_age) = match kind.as_deref() {
         Some("live") => (WORKER_LIVE_FILE, WORKER_LIVE_MAX_AGE),
-        Some("ready") => (WORKER_READY_FILE, WORKER_READY_MAX_AGE),
+        Some("ready") => (
+            WORKER_READY_FILE,
+            worker_ready_max_age(parse_processor_poll_ms(
+                &std::env::var("PROCESSOR_POLL_MS").unwrap_or_else(|_| "100".into()),
+            )?),
+        ),
         _ => return Err("Usage: event-service worker-health [live|ready]"),
     };
     let directory = std::env::var_os("WORKER_HEALTH_DIR").ok_or("WORKER_HEALTH_DIR required")?;
@@ -134,12 +153,9 @@ async fn run() -> Result<(), &'static str> {
             .ok()
             .filter(|n| (1..=1000).contains(n))
             .ok_or("Invalid PROCESSOR_BATCH_SIZE")?;
-        let delay: u64 = std::env::var("PROCESSOR_POLL_MS")
-            .unwrap_or_else(|_| "100".into())
-            .parse()
-            .ok()
-            .filter(|n| (1..=60000).contains(n))
-            .ok_or("Invalid PROCESSOR_POLL_MS")?;
+        let delay = parse_processor_poll_ms(
+            &std::env::var("PROCESSOR_POLL_MS").unwrap_or_else(|_| "100".into()),
+        )?;
         let health_directory = std::env::var_os("WORKER_HEALTH_DIR");
         let health_directory = health_directory.as_deref().map(Path::new);
         let worker = async {
@@ -262,6 +278,20 @@ mod tests {
     fn liveness_tolerates_the_longest_retry() {
         assert!(WORKER_LIVE_MAX_AGE > Duration::from_secs(60));
         assert!(WORKER_READY_MAX_AGE < WORKER_LIVE_MAX_AGE);
+    }
+    #[test]
+    /// Readiness must survive every accepted polling interval without waiting for a real minute.
+    fn readiness_outlasts_every_supported_poll_interval() {
+        for poll_ms in [1, 100, 30000, 60000] {
+            assert_eq!(parse_processor_poll_ms(&poll_ms.to_string()), Ok(poll_ms));
+            let max_age = worker_ready_max_age(poll_ms);
+            assert!(max_age > Duration::from_millis(poll_ms));
+            assert!(max_age < WORKER_LIVE_MAX_AGE);
+        }
+        assert_eq!(worker_ready_max_age(60000), Duration::from_secs(90));
+        for invalid in ["0", "60001", "invalid"] {
+            assert!(parse_processor_poll_ms(invalid).is_err());
+        }
     }
     #[test]
     /// Extreme configuration never produces a tight retry loop or unbounded waiting.
