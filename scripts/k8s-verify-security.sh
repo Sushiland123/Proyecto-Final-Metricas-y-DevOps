@@ -45,7 +45,9 @@ as_account() {
 # Falla si algún contenedor del ambiente no cumple el contexto de seguridad esperado.
 pods_are_restricted() {
   local report
-  report=$(kube -n "$namespace" get pods --field-selector=status.phase=Running -o \
+  # Solo la aplicación: cert-manager crea Pods temporales propios para el reto ACME.
+  report=$(kube -n "$namespace" get pods -l 'app.kubernetes.io/name in (event-service,postgres)' \
+    --field-selector=status.phase=Running -o \
     jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.serviceAccountName}{" "}{.spec.automountServiceAccountToken}{" "}{.spec.securityContext.runAsNonRoot}{" "}{.spec.containers[0].securityContext.allowPrivilegeEscalation}{" "}{.spec.containers[0].securityContext.readOnlyRootFilesystem}{"\n"}{end}') || return 1
   [[ -n "$report" ]] || return 1
   ! grep -v '^[^ ]* event-service false true false true$' <<<"$report" | grep -q .
