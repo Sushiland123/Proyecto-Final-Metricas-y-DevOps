@@ -78,6 +78,8 @@ La tabla anterior corresponde a la primera versión del script. La versión corr
 | Control negativo: ingreso abierto y egreso denegado, script anterior | Todos los controles pasan: falso positivo |
 | Control negativo: ingreso abierto y egreso denegado, script corregido | 2 fallas, PostgreSQL y API, código de salida 1 |
 | Políticas restauradas | 23 de 23; sin Pods ni políticas temporales restantes |
+| API sin Pods | El control falla: no se da por bueno el ingreso sin una IP real |
+| Logs revisados | API, worker, PostgreSQL y 2 Pods de migración, sin valores de Secrets |
 
 El control negativo quitó `Ingress` de `default-deny` y eliminó `postgres-from-event-service`. Se restauró aplicando el manifiesto `foundation`.
 
